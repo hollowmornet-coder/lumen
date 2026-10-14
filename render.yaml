@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: lumen
+    env: docker
+    dockerfilePath: ./Dockerfile
+    plan: free
+    region: singapore
+    healthCheckPath: /api/health
+    envVars:
+      - key: DATABASE_URL
+        value: mysql://USER:PASS@HOST:4000/lumen_db?ssl=true
+      - key: JWT_SECRET
+        sync: false
+      - key: FRONTEND_ORIGIN
+        value: https://${RENDER_EXTERNAL_HOSTNAME}
+      - key: PORT
+        value: 4000

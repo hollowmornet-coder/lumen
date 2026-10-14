@@ -1,0 +1,165 @@
+
+=== LUMEN API TEST ===
+Target: http://localhost:4000/api
+
+[0] Reset database dari database.sql
+  [PASS] Database direset ke kondisi seed
+
+[1] Health & Database
+  [PASS] Health endpoint merespons 200
+
+[2] Autentikasi
+  [PASS] Login dengan kata sandi salah ditolak
+  [PASS] Login admin berhasil
+  [PASS] Login siswa berhasil
+  [PASS] Endpoint tanpa token ditolak
+
+[3] Otorisasi (RBAC)
+  [PASS] Siswa tidak bisa akses /members
+  [PASS] Siswa tidak bisa ubah pengaturan
+  [PASS] Siswa tidak bisa baca log aktivitas
+
+[4] Katalog
+  [PASS] Siswa bisa melihat katalog
+  [PASS] Pencarian judul berfungsi
+  [PASS] Ada buku tersedia untuk pengujian
+     -> Buku uji: 'Atomic Habits' (stok awal 3)
+
+[5] Alur Peminjaman
+  [PASS] Siswa dapat mengajukan peminjaman
+  [PASS] Status awal = pending
+  [PASS] Permohonan ganda untuk buku sama ditolak
+  [PASS] Siswa tidak bisa menyetujui permohonannya sendiri
+  [PASS] Stok tidak berubah saat masih pending
+  [PASS] Admin dapat menyetujui
+  [PASS] Status setelah approve = approved
+  [PASS] Jatuh tempo terisi
+  [PASS] Stok berkurang 1 setelah approve
+  [PASS] Buku ditandai dipinjam
+  [PASS] Transisi borrowed->borrowed ditolak
+
+[6] Isolasi Data Antar	User
+  [PASS] Siswa lain tidak bisa membaca transaksi milik orang lain
+  [PASS] Siswa lain tidak bisa membatalkan transaksi orang lain
+  [PASS] Daftar /loans siswa hanya berisi miliknya sendiri
+
+[7] Alur Pengembalian
+  [PASS] Siswa dapat mengajukan pengembalian
+  [PASS] Stok belum bertambah sebelum verifikasi petugas
+  [PASS] Petugas dapat mengonfirmasi pengembalian
+  [PASS] Stok kembali seperti semula
+  [PASS] Pengembalian ganda ditolak
+  [PASS] Stok tidak bertambah lagi setelah pengembalian ganda
+
+[8] Validasi Input
+  [PASS] ISBN tidak valid ditolak
+  [PASS] ISBN duplikat ditolak
+  [PASS] Kata sandi lemah ditolak saat registrasi
+  [PASS] Konfirmasi kata sandi tidak cocok ditolak
+  [PASS] Registrasi siswa berhasil
+  [PASS] Role hasil registrasi = user (bukan admin)
+  [PASS] Kode anggota dibuat otomatis
+
+[9] Dashboard & Statistik
+  [PASS] Admin overview merespons
+  [PASS] Total judul > 0
+  [PASS] Total eksemplar >= judul
+  [PASS] Charts merespons
+  [PASS] Tren peminjaman punya >=1 titik setelah pengujian
+  [PASS] Filter tanggal mengubah hasil (rentang kosong = 0 titik)
+  [PASS] Member overview merespons
+
+[10] Konkurensi: dua approval pada satu eksemplar terakhir
+  [PASS] Dua permohonan pada buku stok 1 sama-sama tercatat (belum ada reservasi)
+  [PASS] Hanya satu dari dua approval yang berhasil
+  [PASS] Approval yang kalah ditolak dengan aturan stok
+  [PASS] Stok tidak pernah menjadi negatif
+  [PASS] Peminjam dapat menerima buku (approved -> borrowed)
+  [PASS] Stok kembali ke 1 setelah pengembalian
+  [PASS] Pengembalian dari status pending ditolak
+
+[11] Koleksi Penulis & Seri Buku
+  [PASS] Daftar penulis merespons
+  [PASS] Daftar penulis tidak kosong
+  [PASS] Siswa dan admin melihat jumlah penulis yang sama
+  [PASS] Penulis Andrea Hirata ditemukan
+  [PASS] Jumlah judul dan eksemplar dibedakan (judul=4, eksemplar=30)
+  [PASS] Jumlah seri terhitung terpisah
+  [PASS] Penulis tanpa buku tetapi berseri tetap muncul
+  [PASS] Tere Liye punya 2 seri terverifikasi
+  [PASS] Buku Tere Liye masuk ke inventaris perpustakaan
+  [PASS] Pencarian penulis berfungsi
+  [PASS] Detail penulis merespons
+  [PASS] Detail penulis memuat daftar seri
+  [PASS] Karya lepas terpisah dari seri
+  [PASS] Serial Bumi terdaftar
+  [PASS] Serial Bumi: 10 dari 17 judul ada di koleksi
+  [PASS] Jumlah judul dalam seri != jumlah yang dimiliki
+  [PASS] Detail seri merespons
+  [PASS] Serial Bumi memiliki 17 item
+  [PASS] Semua item terurut naik
+  [PASS] 7 item serial Bumi ditandai belum ada di koleksi
+  [PASS] Item di luar koleksi punya book=null (tidak bisa dipinjam)
+  [PASS] 10 item serial Bumi tertaut ke buku sungguhan
+  [PASS] Trilogi Laskar Pelangi: 3 dari 3 judul ada di koleksi
+  [PASS] Item yang dimiliki punya book.id
+  [PASS] Penulis yang tidak ada menghasilkan 404
+  [PASS] Seri yang tidak ada menghasilkan 404
+  [PASS] Siswa tidak bisa membuat seri (403)
+  [PASS] Tanpa token tidak bisa membuat seri (401)
+  [PASS] Posisi kembar ditolak (409)
+  [PASS] Buku penulis lain ditolak masuk seri (409)
+  [PASS] Urutan seri valid disimpan
+  [PASS] Urutan baru terbaca dari backend
+  [PASS] Seri tanpa judul ditolak validasi (422)
+
+[12] Regresi Fitur Lama
+  [PASS] Katalog biasa tetap berfungsi
+  [PASS] Pencarian buku tetap berfungsi
+  [PASS] Dasbor admin tetap berfungsi
+  [PASS] Kelola anggota tetap berfungsi
+  [PASS] Kategori tetap berfungsi
+  [PASS] Peminjaman tetap bisa diajukan
+  [PASS] Persetujuan peminjaman tetap berfungsi
+  [PASS] Serah-terima buku tetap berfungsi
+  [PASS] Pengembalian tetap berfungsi
+  [PASS] Stok kembali utuh setelah pengembalian
+
+[13] Profil & Akun (keduanya role)
+  [PASS] GET /auth/me untuk siswa merespons
+  [PASS] /auth/me memuat memberCode
+  [PASS] /auth/me memuat className
+  [PASS] /auth/me TIDAK membocorkan password_hash
+  [PASS] GET /auth/me untuk admin merespons
+  [PASS] Admin punya role admin
+  [PASS] Siswa dapat mengubah profilnya sendiri
+  [PASS] Profil dengan nama terlalu pendek ditolak (422)
+  [PASS] Siswa dapat mengganti kata sandinya
+  [PASS] Kata sandi lama tidak lagi berlaku
+  [PASS] Login dengan kata sandi baru berhasil
+  [PASS] Ganti kata sandi ditolak bila kata sandi lama salah
+  [PASS] Kata sandi demo dipulihkan
+  [PASS] Login dengan kata sandi demo kembali berhasil
+
+[14] Pembatasan Akses Per Role
+  [PASS] Siswa boleh MEMBACA aturan
+  [PASS] Siswa TIDAK boleh mengubah aturan (403)
+  [PASS] Siswa TIDAK boleh menambah buku (403)
+  [PASS] Siswa TIDAK boleh mengubah isi seri (403)
+  [PASS] Siswa TIDAK boleh membaca log aktivitas (403)
+  [PASS] Siswa TIDAK boleh membaca daftar anggota (403)
+  [PASS] Admin juga bisa membaca katalog
+  [PASS] Admin bisa membaca detail seri
+
+[15] Sampul Buku
+  [PASS] Sebagian buku memiliki sampul
+  [PASS] Seluruh cover penunjuk ke /uploads/covers/
+  [PASS] Berkas sampul dapat diambil lewat server
+  [PASS] Buku Tere Liye masuk ke inventaris
+  [PASS] Buku Tere Liye memiliki sampul
+
+=== HASIL ===
+Lulus  : 123
+Gagal  : 0
+
+SEMUA PENGUJIAN LULUS

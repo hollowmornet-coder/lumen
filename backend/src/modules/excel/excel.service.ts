@@ -1,0 +1,482 @@
+import ExcelJS from 'exceljs';
+import { createBookSchema, type CreateBookInput } from '../books/books.schema';
+import type { Book } from '../books/books.types';
+import type { Member } from '../members/members.service';
+import type { Loan } from '../loans/loans.service';
+import { findBooksByIsbnList } from '../books/books.service';
+import type { LibrarySettings } from '../settings/settings.service';
+
+/**
+ * Excel files can contain formulas. If a cell value starts with `=`, `+`, `-`
+ * or `@`, a spreadsheet app will evaluate it when the file is opened.
+ * Prefixing with an apostrophe forces the value to be treated as plain text.
+ * This is the standard CSV/Excel injection guard.
+ */
+const FORMULA_TRIGGERS = ['=', '+', '-', '@', '\t', '\r'];
+
+export function sanitiseCell(value: unknown): string | number | null {
+  if (value === null || value === undefined) return null;
+  if (typeof value === 'number') return value;
+  if (typeof value === 'boolean') return value ? 'YA' : 'TIDAK';
+
+  let text = String(value);
+  if (text.length > 0 && FORMULA_TRIGGERS.includes(text[0])) {
+    text = `'${text}`;
+  }
+  // Excel hard-limits a cell to 32,767 characters.
+  return text.slice(0, 32_767);
+}
+
+const HEADER_FILL: ExcelJS.Fill = {
+  type: 'pattern',
+  pattern: 'solid',
+  fgColor: { argb: 'FF1C1917' },
+};
+
+function styleHeader(row: ExcelJS.Row): void {
+  row.font = { bold: true, color: { argb: 'FFFFFFFF' }, size: 11 };
+  row.fill = HEADER_FILL;
+  row.alignment = { vertical: 'middle', horizontal: 'left' };
+  row.height = 22;
+}
+
+function newWorkbook(creator: string): ExcelJS.Workbook {
+  const wb = new ExcelJS.Workbook();
+  wb.creator = creator;
+  wb.created = new Date();
+  return wb;
+}
+
+// =====================================================================
+//  EXPORT
+// =====================================================================
+
+export async function buildBooksWorkbook(books: Book[]): Promise<Buffer> {
+  const wb = newWorkbook('LUMEN - Sistem Perpustakaan Sekolah Digital');
+  const ws = wb.addWorksheet('Buku', {
+    views: [{ state: 'frozen', ySplit: 1 }],
+  });
+
+  ws.columns = [
+    { header: 'ISBN', key: 'isbn', width: 20 },
+    { header: 'Judul', key: 'title', width: 38 },
+    { header: 'Penulis', key: 'author', width: 24 },
+    { header: 'Penerbit', key: 'publisher', width: 20 },
+    { header: 'Tahun', key: 'publishYear', width: 10 },
+    { header: 'Kategori', key: 'categoryName', width: 20 },
+    { header: 'Lokasi Rak', key: 'shelfLocation', width: 14 },
+    { header: 'Total Eksemplar', key: 'totalCopies', width: 16 },
+    { header: 'Tersedia', key: 'availableCopies', width: 12 },
+    { header: 'Dipinjam', key: 'borrowedCopies', width: 12 },
+    { header: 'Status', key: 'status', width: 12 },
+    { header: 'Deskripsi', key: 'description', width: 50 },
+  ];
+  styleHeader(ws.getRow(1));
+
+  for (const b of books) {
+    ws.addRow({
+      isbn: sanitiseCell(b.isbn),
+      title: sanitiseCell(b.title),
+      author: sanitiseCell(b.author),
+      publisher: sanitiseCell(b.publisher),
+      publishYear: b.publishYear ?? null,
+      categoryName: sanitiseCell(b.categoryName),
+      shelfLocation: sanitiseCell(b.shelfLocation),
+      totalCopies: b.totalCopies,
+      availableCopies: b.availableCopies,
+      borrowedCopies: b.borrowedCopies,
+      status: b.status === 'active' ? 'Aktif' : 'Nonaktif',
+      description: sanitiseCell(b.description),
+    });
+  }
+
+  ws.autoFilter = { from: 'A1', to: { row: 1, column: ws.columnCount } };
+  return toBuffer(wb);
+}
+
+export async function buildMembersWorkbook(members: Member[]): Promise<Buffer> {
+  const wb = newWorkbook('LUMEN - Sistem Perpustakaan Sekolah Digital');
+  const ws = wb.addWorksheet('Anggota', { views: [{ state: 'frozen', ySplit: 1 }] });
+
+  ws.columns = [
+    { header: 'Kode Anggota', key: 'memberCode', width: 18 },
+    { header: 'Nama Lengkap', key: 'fullName', width: 28 },
+    { header: 'Username', key: 'username', width: 18 },
+    { header: 'Email', key: 'email', width: 28 },
+    { header: 'Kelas', key: 'className', width: 14 },
+    { header: 'Telepon', key: 'phone', width: 18 },
+    { header: 'Status', key: 'status', width: 12 },
+    { header: 'Pinjaman Aktif', key: 'activeLoans', width: 16 },
+    { header: 'Total Peminjaman', key: 'totalLoans', width: 18 },
+    { header: 'Terakhir Masuk', key: 'lastLoginAt', width: 20 },
+  ];
+  styleHeader(ws.getRow(1));
+
+  for (const m of members) {
+    ws.addRow({
+      memberCode: sanitiseCell(m.memberCode),
+      fullName: sanitiseCell(m.fullName),
+      username: sanitiseCell(m.username),
+      email: sanitiseCell(m.email),
+      className: sanitiseCell(m.className),
+      phone: sanitiseCell(m.phone),
+      status: m.status === 'active' ? 'Aktif' : 'Nonaktif',
+      activeLoans: m.activeLoans,
+      totalLoans: m.totalLoans,
+      lastLoginAt: sanitiseCell(m.lastLoginAt),
+    });
+  }
+
+  ws.autoFilter = { from: 'A1', to: { row: 1, column: ws.columnCount } };
+  return toBuffer(wb);
+}
+
+export async function buildLoansWorkbook(
+  loans: Loan[],
+  settings: LibrarySettings,
+  rangeLabel: string,
+): Promise<Buffer> {
+  const wb = newWorkbook('LUMEN - Sistem Perpustakaan Sekolah Digital');
+  const ws = wb.addWorksheet('Transaksi', { views: [{ state: 'frozen', ySplit: 1 }] });
+
+  ws.columns = [
+    { header: 'Kode Transaksi', key: 'loanCode', width: 24 },
+    { header: 'Anggota', key: 'member', width: 26 },
+    { header: 'Kode Anggota', key: 'memberCode', width: 18 },
+    { header: 'Judul Buku', key: 'title', width: 34 },
+    { header: 'ISBN', key: 'isbn', width: 20 },
+    { header: 'Status', key: 'status', width: 14 },
+    { header: 'Diajukan', key: 'requestedAt', width: 20 },
+    { header: 'Disetujui', key: 'approvedAt', width: 20 },
+    { header: 'Dipinjam', key: 'borrowedAt', width: 20 },
+    { header: 'Jatuh Tempo', key: 'dueAt', width: 20 },
+    { header: 'Dikembalikan', key: 'returnedAt', width: 20 },
+    { header: 'Hari Telat', key: 'daysLate', width: 12 },
+    { header: 'Denda', key: 'lateFee', width: 14 },
+    { header: 'Kondisi', key: 'condition', width: 14 },
+  ];
+  styleHeader(ws.getRow(1));
+
+  const STATUS_LABEL: Record<string, string> = {
+    pending: 'Menunggu',
+    approved: 'Disetujui',
+    rejected: 'Ditolak',
+    borrowed: 'Dipinjam',
+    return_requested: 'Ajukan Kembali',
+    returned: 'Selesai',
+    cancelled: 'Dibatalkan',
+    overdue: 'Terlambat',
+  };
+  const CONDITION_LABEL: Record<string, string> = {
+    good: 'Baik',
+    damaged: 'Rusak',
+    lost: 'Hilang',
+  };
+
+  for (const l of loans) {
+    ws.addRow({
+      loanCode: sanitiseCell(l.loanCode),
+      member: sanitiseCell(l.member.fullName),
+      memberCode: sanitiseCell(l.member.memberCode),
+      title: sanitiseCell(l.book.title),
+      isbn: sanitiseCell(l.book.isbn),
+      status: STATUS_LABEL[l.displayStatus] ?? l.displayStatus,
+      requestedAt: sanitiseCell(l.requestedAt),
+      approvedAt: sanitiseCell(l.approvedAt),
+      borrowedAt: sanitiseCell(l.borrowedAt),
+      dueAt: sanitiseCell(l.dueAt),
+      returnedAt: sanitiseCell(l.returnedAt),
+      daysLate: l.daysLate ?? 0,
+      lateFee: l.lateFee ?? 0,
+      condition: l.returnCondition ? (CONDITION_LABEL[l.returnCondition] ?? l.returnCondition) : '',
+    });
+  }
+
+  ws.autoFilter = { from: 'A1', to: { row: 1, column: ws.columnCount } };
+
+  // A small summary sheet makes the export usable as a report on its own.
+  const info = wb.addWorksheet('Ringkasan');
+  info.columns = [
+    { header: 'Laporan', key: 'k', width: 32 },
+    { header: 'Nilai', key: 'v', width: 28 },
+  ];
+  styleHeader(info.getRow(1));
+  info.addRow({ k: 'Periode', v: rangeLabel });
+  info.addRow({ k: 'Jumlah transaksi', v: loans.length });
+  info.addRow({ k: 'Denda keterlambatan / hari', v: settings.lateFeePerDay });
+  info.addRow({ k: 'Dicetak pada', v: new Date().toLocaleString('id-ID') });
+
+  return toBuffer(wb);
+}
+
+async function toBuffer(wb: ExcelJS.Workbook): Promise<Buffer> {
+  const data = await wb.xlsx.writeBuffer();
+  return Buffer.from(data);
+}
+
+// =====================================================================
+//  TEMPLATE + IMPORT
+// =====================================================================
+
+export const IMPORT_HEADERS = [
+  'ISBN',
+  'Judul',
+  'Penulis',
+  'Penerbit',
+  'Tahun Terbit',
+  'Kategori',
+  'Lokasi Rak',
+  'Jumlah Eksemplar',
+  'Deskripsi',
+] as const;
+
+export async function buildTemplateWorkbook(): Promise<Buffer> {
+  const wb = newWorkbook('LUMEN - Sistem Perpustakaan Sekolah Digital');
+  const ws = wb.addWorksheet('Data Buku', { views: [{ state: 'frozen', ySplit: 1 }] });
+
+  ws.addRow(IMPORT_HEADERS as unknown as string[]);
+  styleHeader(ws.getRow(1));
+
+  ws.columns = [
+    { width: 20 }, { width: 38 }, { width: 24 }, { width: 20 },
+    { width: 14 }, { width: 20 }, { width: 14 }, { width: 18 }, { width: 40 },
+  ];
+
+  // Two example rows so the format is obvious. They are clearly labelled and
+  // are NOT inserted into the database - the import reads the real rows only.
+  const example = ws.addRow([
+    '978-602-03-0001-1', 'Contoh Judul Buku', 'Contoh Penulis', 'Contoh Penerbit',
+    2024, 'Fiksi', 'F-01-01', 2, 'Deskripsi singkat buku (opsional).',
+  ]);
+  example.font = { italic: true, color: { argb: 'FF9CA3AF' } };
+
+  const guide = wb.addWorksheet('Panduan');
+  guide.columns = [
+    { header: 'Kolom', key: 'col', width: 22 },
+    { header: 'Wajib', key: 'req', width: 10 },
+    { header: 'Keterangan', key: 'desc', width: 70 },
+  ];
+  styleHeader(guide.getRow(1));
+  const docs: Array<[string, string, string]> = [
+    ['ISBN', 'Wajib', 'ISBN-10 atau ISBN-13. Harus unik, format dengan/tanpa tanda hubung.'],
+    ['Judul', 'Wajib', 'Judul buku, minimal 2 karakter.'],
+    ['Penulis', 'Wajib', 'Nama penulis, minimal 2 karakter.'],
+    ['Penerbit', 'Opsional', 'Nama penerbit.'],
+    ['Tahun Terbit', 'Opsional', 'Angka antara 1000 dan tahun depan.'],
+    ['Kategori', 'Opsional', 'Harus sama dengan nama kategori yang sudah ada di sistem.'],
+    ['Lokasi Rak', 'Opsional', 'Contoh: F-01-01.'],
+    ['Jumlah Eksemplar', 'Wajib', 'Angka minimal 1.'],
+    ['Deskripsi', 'Opsional', 'Maksimal 2000 karakter.'],
+  ];
+  for (const [col, req, desc] of docs) {
+    guide.addRow({ col, req, desc });
+  }
+
+  return toBuffer(wb);
+}
+
+export interface ImportRowError {
+  row: number;
+  field: string;
+  message: string;
+}
+
+export interface ImportResult {
+  totalRows: number;
+  validRows: number;
+  errorRows: number;
+  duplicateRows: number;
+  errors: ImportRowError[];
+  data: CreateBookInput[];
+  categoryMap: Map<string, number>;
+}
+
+function cellText(value: ExcelJS.CellValue): string {
+  if (value === null || value === undefined) return '';
+  if (typeof value === 'object') {
+    if ('text' in value) return String(value.text ?? '').trim();
+    if ('result' in value) return String(value.result ?? '').trim();
+    if ('richText' in value) return value.richText.map((r) => r.text).join('').trim();
+    if (value instanceof Date) return value.toISOString().slice(0, 10);
+  }
+  return String(value).trim();
+}
+
+/**
+ * Parses and validates an uploaded workbook.
+ *
+ * Performs NO database writes. The caller decides what to do with `data`, which
+ * keeps "validate" and "commit" as separate, testable steps.
+ */
+export async function parseBooksWorkbook(
+  buffer: Buffer,
+  categoryMap: Map<string, number>,
+): Promise<ImportResult> {
+  const wb = new ExcelJS.Workbook();
+  // exceljs bundles its own @types/node, so the Buffer generics differ from the
+  // ones in this project. The bytes are identical; the cast is types-only.
+  await wb.xlsx.load(buffer as unknown as Parameters<typeof wb.xlsx.load>[0]);
+
+  const ws = wb.getWorksheet('Data Buku') ?? wb.worksheets[0];
+  if (!ws) {
+    return {
+      totalRows: 0, validRows: 0, errorRows: 1, duplicateRows: 0,
+      errors: [{ row: 0, field: '-', message: 'File tidak memiliki lembar kerja.' }],
+      data: [], categoryMap,
+    };
+  }
+
+  const headerRow = ws.getRow(1);
+  const headerIndex = new Map<string, number>();
+  headerRow.eachCell((cell, colNumber) => {
+    const text = cellText(cell.value).toLowerCase().replace(/\s+/g, ' ').trim();
+    headerIndex.set(text, colNumber);
+  });
+
+  const missing = IMPORT_HEADERS.filter((h) => !headerIndex.has(h.toLowerCase()));
+  if (missing.length > 0) {
+    return {
+      totalRows: 0, validRows: 0, errorRows: 1, duplicateRows: 0,
+      errors: [{
+        row: 1,
+        field: 'Header',
+        message: `Kolom wajib tidak ditemukan: ${missing.join(', ')}. Gunakan template resmi.`,
+      }],
+      data: [], categoryMap,
+    };
+  }
+
+  const at = (row: ExcelJS.Row, header: string): ExcelJS.CellValue =>
+    row.getCell(headerIndex.get(header.toLowerCase()) as number).value;
+
+  const errors: ImportRowError[] = [];
+  const data: CreateBookInput[] = [];
+  const seenIsbn = new Map<string, number>();
+
+  let rowNumber = 0;
+  let duplicateRows = 0;
+
+  ws.eachRow({ includeEmpty: false }, (row, rowIdx) => {
+    if (rowIdx === 1) return;
+    rowNumber += 1;
+
+    const isbn = cellText(at(row, 'ISBN'));
+    const title = cellText(at(row, 'Judul'));
+    const author = cellText(at(row, 'Penulis'));
+
+    // Skip fully blank rows silently.
+    if (!isbn && !title && !author) return;
+
+    const rowErrors: ImportRowError[] = [];
+
+    if (seenIsbn.has(isbn)) {
+      duplicateRows += 1;
+      rowErrors.push({
+        row: rowIdx,
+        field: 'ISBN',
+        message: `ISBN duplikat di dalam file (sama dengan baris ${seenIsbn.get(isbn)}).`,
+      });
+    }
+
+    const publishYearRaw = cellText(at(row, 'Tahun Terbit'));
+    const copiesRaw = cellText(at(row, 'Jumlah Eksemplar'));
+    const categoryName = cellText(at(row, 'Kategori'));
+
+    let categoryId: number | null = null;
+    if (categoryName) {
+      const found = categoryMap.get(categoryName.toLowerCase());
+      if (found === undefined) {
+        rowErrors.push({
+          row: rowIdx,
+          field: 'Kategori',
+          message: `Kategori "${categoryName}" tidak ditemukan. Buat kategorinya terlebih dahulu.`,
+        });
+      } else {
+        categoryId = found;
+      }
+    }
+
+    const yearNum = publishYearRaw === '' ? undefined : Number(publishYearRaw);
+    if (publishYearRaw !== '' && Number.isNaN(yearNum)) {
+      rowErrors.push({ row: rowIdx, field: 'Tahun Terbit', message: 'Tahun terbit harus berupa angka.' });
+    }
+
+    const copiesNum = copiesRaw === '' ? undefined : Number(copiesRaw);
+    if (copiesRaw !== '' && (Number.isNaN(copiesNum) || !Number.isInteger(copiesNum))) {
+      rowErrors.push({
+        row: rowIdx,
+        field: 'Jumlah Eksemplar',
+        message: 'Jumlah eksemplar harus bilangan bulat.',
+      });
+    }
+
+    const candidate = {
+      isbn,
+      title,
+      author,
+      publisher: cellText(at(row, 'Penerbit')) || null,
+      publishYear: yearNum ?? null,
+      categoryId,
+      description: cellText(at(row, 'Deskripsi')) || null,
+      shelfLocation: cellText(at(row, 'Lokasi Rak')) || null,
+      totalCopies: copiesNum ?? 1,
+    };
+
+    const parsed = createBookSchema.safeParse(candidate);
+    if (!parsed.success) {
+      for (const issue of parsed.error.issues) {
+        rowErrors.push({
+          row: rowIdx,
+          field: issue.path.join('.') || '-',
+          message: issue.message,
+        });
+      }
+    }
+
+    if (rowErrors.length > 0) {
+      errors.push(...rowErrors);
+    } else {
+      data.push(parsed.data as CreateBookInput);
+      seenIsbn.set(isbn, rowIdx);
+    }
+  });
+
+  // Flag ISBNs that already exist in the database.
+  const existing = await findBooksByIsbnList(data.map((d) => d.isbn));
+  if (existing.size > 0) {
+    const filtered: CreateBookInput[] = [];
+    let dbDupes = 0;
+    for (const item of data) {
+      if (existing.has(item.isbn)) {
+        dbDupes += 1;
+        errors.push({
+          row: 0,
+          field: 'ISBN',
+          message: `ISBN ${item.isbn} sudah terdaftar di database (buku: "${item.title}").`,
+        });
+      } else {
+        filtered.push(item);
+      }
+    }
+    duplicateRows += dbDupes;
+    return {
+      totalRows: data.length + duplicateRows,
+      validRows: filtered.length,
+      errorRows: errors.length,
+      duplicateRows,
+      errors,
+      data: filtered,
+      categoryMap,
+    };
+  }
+
+  return {
+    totalRows: data.length + duplicateRows,
+    validRows: data.length,
+    errorRows: errors.length,
+    duplicateRows,
+    errors,
+    data,
+    categoryMap,
+  };
+}
