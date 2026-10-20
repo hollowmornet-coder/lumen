@@ -9,6 +9,8 @@ import {
   CalendarDays,
   Clock3,
   Flame,
+  HandCoins,
+  Library,
   RefreshCw,
   Users,
 } from 'lucide-react';
@@ -26,7 +28,7 @@ import {
   TrendChart,
 } from '@/components/charts/Charts';
 import { useAdminCharts, useAdminOverview, useLoans, useListParams } from '@/hooks/useApi';
-import { toInputDate, formatDateTime } from '@/lib/utils';
+import { toInputDate, formatDateTime, formatNumber, formatRupiah } from '@/lib/utils';
 import { staggerContainer, staggerItem } from '@/lib/motion';
 
 const BUCKETS = [
@@ -43,7 +45,7 @@ function defaultRange() {
 
 export default function AdminDashboardPage() {
   const { get, set } = useListParams();
-  const defaults = React.useMemo(defaultRange, []);
+  const defaults = React.useMemo(() => defaultRange(), []);
 
   const from = get('from', defaults.from);
   const to = get('to', defaults.to);
@@ -209,6 +211,49 @@ export default function AdminDashboardPage() {
                   />
                 </div>
               </div>
+            </section>
+
+            {/* ---------- Needs attention ---------- */}
+            <section aria-label="Perlu tindakan" className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              <AttentionTile
+                to="/admin/denda"
+                icon={HandCoins}
+                tone="danger"
+                label="Denda belum lunas"
+                value={formatRupiah(d?.unpaidFinesTotal ?? 0)}
+                hint={`${formatNumber(d?.unpaidFinesCount ?? 0)} tagihan terbuka`}
+                loading={isLoading}
+                alert={(d?.unpaidFinesCount ?? 0) > 0}
+              />
+              <AttentionTile
+                to="/admin/transaksi?status=pickup_expired"
+                icon={Clock3}
+                tone="warning"
+                label="Lewat batas ambil"
+                value={formatNumber(d?.pickupExpired ?? 0)}
+                hint="buku disisihkan, tidak diambil"
+                loading={isLoading}
+                alert={(d?.pickupExpired ?? 0) > 0}
+              />
+              <AttentionTile
+                to="/admin/transaksi?status=return_requested"
+                icon={Library}
+                tone="cyan"
+                label="Antrean menunggu"
+                value={formatNumber(d?.queueWaiting ?? 0)}
+                hint="anggota menunggu buku tersedia"
+                loading={isLoading}
+              />
+              <AttentionTile
+                to="/admin/buku"
+                icon={BookCopy}
+                tone="violet"
+                label="Eksemplar rusak"
+                value={formatNumber(d?.damagedCopies ?? 0)}
+                hint="dalam perbaikan, tidak dipinjam"
+                loading={isLoading}
+                alert={(d?.damagedCopies ?? 0) > 0}
+              />
             </section>
 
             {/* ---------- Charts ---------- */}
@@ -393,5 +438,69 @@ export default function AdminDashboardPage() {
         )}
       </PageBody>
     </>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+
+/**
+ * A tile that exists only to route the officer somewhere.
+ *
+ * Deliberately not a StatCard: these are not KPIs to admire, they are queues to
+ * clear. When the number is above zero the whole tile turns urgent.
+ */
+function AttentionTile({
+  to,
+  icon: Icon,
+  tone,
+  label,
+  value,
+  hint,
+  loading,
+  alert,
+}: {
+  to: string;
+  icon: React.ComponentType<{ className?: string }>;
+  tone: 'danger' | 'warning' | 'cyan' | 'violet';
+  label: string;
+  value: string;
+  hint: string;
+  loading: boolean;
+  alert?: boolean;
+}) {
+  const tones = {
+    danger: 'bg-destructive-soft text-destructive',
+    warning: 'bg-warning-soft text-warning',
+    cyan: 'bg-cyan-soft text-cyan',
+    violet: 'bg-violet-soft text-secondary',
+  } as const;
+
+  return (
+    <Link
+      to={to}
+      className={
+        alert
+          ? 'panel group flex items-start gap-3 border-warning/30 bg-warning-soft/30 p-4 transition-colors hover:border-warning/50'
+          : 'panel group flex items-start gap-3 p-4 transition-colors hover:border-foreground/20'
+      }
+    >
+      <span
+        className={`flex size-9 shrink-0 items-center justify-center rounded-lg ${tones[tone]}`}
+        aria-hidden
+      >
+        <Icon className="size-[18px]" />
+      </span>
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-xs font-medium text-muted-foreground">{label}</p>
+        {loading ? (
+          <div className="mt-1.5 h-6 w-20 rounded skeleton" aria-label="Memuat" />
+        ) : (
+          <p className="mt-1 font-display text-lg font-semibold tabular-nums text-foreground">
+            {value}
+          </p>
+        )}
+        <p className="mt-0.5 truncate text-2xs text-muted-foreground">{hint}</p>
+      </div>
+    </Link>
   );
 }

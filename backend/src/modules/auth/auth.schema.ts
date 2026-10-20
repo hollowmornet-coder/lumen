@@ -85,7 +85,33 @@ export const changePasswordSchema = z
     path: ['newPassword'],
   });
 
+/** Self-service reset, step 1: username / email / member code. */
+export const requestResetSchema = z.object({
+  identifier: z
+    .string({ required_error: 'Username, email, atau kode anggota wajib diisi.' })
+    .trim()
+    .min(1, 'Username, email, atau kode anggota wajib diisi.')
+    .max(120, 'Data terlalu panjang.'),
+});
+
+/** Self-service reset, step 2: the token plus the new password. */
+export const resetPasswordSchema = z
+  .object({
+    token: z
+      .string({ required_error: 'Token reset wajib diisi.' })
+      .trim()
+      .min(10, 'Token reset tidak valid.'),
+    newPassword: password,
+    confirmPassword: z.string({ required_error: 'Konfirmasi kata sandi wajib diisi.' }),
+  })
+  .refine((data) => data.newPassword === data.confirmPassword, {
+    message: 'Konfirmasi kata sandi tidak cocok.',
+    path: ['confirmPassword'],
+  });
+
 export type LoginInput = z.infer<typeof loginSchema>;
 export type RegisterInput = z.infer<typeof registerSchema>;
 export type UpdateProfileInput = z.infer<typeof updateProfileSchema>;
 export type ChangePasswordInput = z.infer<typeof changePasswordSchema>;
+export type RequestResetInput = z.infer<typeof requestResetSchema>;
+export type ResetPasswordInput = z.infer<typeof resetPasswordSchema>;

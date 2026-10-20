@@ -5,19 +5,27 @@ import { logActivity } from '../activity/activity.service';
 import {
   adminUpdateNote,
   approveLoan,
+  bulkApproveLoans,
   cancelLoan,
   confirmBorrow,
   confirmReturn as confirmReturnAction,
+  counterLoan,
   getLoanById,
+  getLoanDetail,
   listLoans,
   listMyLoans,
+  releaseExpiredPickup,
+  renewLoan,
   rejectLoan,
   requestLoan,
   requestReturn as requestReturnAction,
 } from './loans.service';
 import type {
+  BulkApproveInput,
   ConfirmReturnInput,
+  CounterLoanInput,
   LoanQuery,
+  RenewLoanInput,
   RejectLoanInput,
   RequestLoanInput,
 } from './loans.schema';
@@ -38,8 +46,8 @@ export const listMine = asyncHandler(async (req: Request, res: Response) => {
 });
 
 export const detail = asyncHandler(async (req: Request, res: Response) => {
-  const loan = await getLoanById(Number(req.params.id), scopeOf(req));
-  res.json({ success: true, data: loan });
+  const { loan, fines } = await getLoanDetail(Number(req.params.id), scopeOf(req));
+  res.json({ success: true, data: loan, fines });
 });
 
 export const create = asyncHandler(async (req: Request, res: Response) => {
@@ -62,6 +70,29 @@ export const create = asyncHandler(async (req: Request, res: Response) => {
     message: result.requiresApproval
       ? 'Permohonan peminjaman terkirim. Menunggu persetujuan petugas.'
       : 'Buku berhasil dipinjam. Selamat membaca!',
+  });
+});
+
+/** Desk circulation: the librarian lends a book directly. */
+export const counter = asyncHandler(async (req: Request, res: Response) => {
+  const body = req.body as CounterLoanInput;
+  const loan = await counterLoan(req.user!.id, body);
+
+  await logActivity({
+    userId: req.user!.id,
+    actorName: req.user!.fullName,
+    action: 'loan.counter',
+    entityType: 'loan',
+    entityId: loan.id,
+    description: `Meminjamkan "${loan.book.title}" langsung kepada ${loan.member.fullName}`,
+    metadata: { days: body.days ?? null, loanCode: loan.loanCode },
+    ipAddress: req.ip ?? undefined,
+  });
+
+  res.status(201).json({
+    success: true,
+    data: loan,
+    message: `Buku dipinjamkan. Jatuh tempo ${loan.dueAt}.`,
   });
 });
 
@@ -89,6 +120,32 @@ export const approve = asyncHandler(async (req: Request, res: Response) => {
   });
 });
 
+export const bulkApprove = asyncHandler(async (req: Request, res: Response) => {
+  const { loanIds, note } = req.body as BulkApproveInput;
+  const result = await bulkApproveLoans(loanIds, req.user!.id, note);
+
+  await logActivity({
+    userId: req.user!.id,
+    actorName: req.user!.fullName,
+    action: 'loan.approve',
+    entityType: 'loan',
+    description: `Menyetujui ${result.approved.length} peminjaman sekaligus${
+      result.failed.length > 0 ? `, ${result.failed.length} gagal` : ''
+    }.`,
+    metadata: { approved: result.approved.length, failed: result.failed.length },
+    ipAddress: req.ip ?? undefined,
+  });
+
+  res.status(result.failed.length > 0 ? 207 : 200).json({
+    success: true,
+    data: result,
+    message:
+      result.failed.length === 0
+        ? `${result.approved.length} permohonan disetujui.`
+        : `${result.approved.length} permohonan disetujui, ${result.failed.length} gagal.`,
+  });
+});
+
 export const borrow = asyncHandler(async (req: Request, res: Response) => {
   const id = Number(req.params.id);
   const loan = await confirmBorrow(id);
@@ -104,6 +161,30 @@ export const borrow = asyncHandler(async (req: Request, res: Response) => {
   });
 
   res.json({ success: true, data: loan, message: 'Buku ditandai sudah dipinjam.' });
+});
+
+export const renew = asyncHandler(async (req: Request, res: Response) => {
+  const id = Number(req.params.id);
+  const body = req.body as RenewLoanInput;
+  const isAdmin = req.user!.role === 'admin';
+  const loan = await renewLoan(id, req.user!.id, isAdmin, body);
+
+  await logActivity({
+    userId: req.user!.id,
+    actorName: req.user!.fullName,
+    action: 'loan.renew',
+    entityType: 'loan',
+    entityId: id,
+    description: `Memperpanjang "${loan.book.title}" (perpanjangan ke-${loan.renewCount})`,
+    metadata: { renewCount: loan.renewCount, dueAt: loan.dueAt },
+    ipAddress: req.ip ?? undefined,
+  });
+
+  res.json({
+    success: true,
+    data: loan,
+    message: `Peminjaman diperpanjang. Jatuh tempo baru: ${loan.dueAt}.`,
+  });
 });
 
 export const reject = asyncHandler(async (req: Request, res: Response) => {
@@ -143,6 +224,24 @@ export const cancel = asyncHandler(async (req: Request, res: Response) => {
   res.json({ success: true, data: loan, message: 'Permohonan peminjaman dibatalkan.' });
 });
 
+/** Frees a hold whose pickup window has passed. */
+export const release = asyncHandler(async (req: Request, res: Response) => {
+  const id = Number(req.params.id);
+  const loan = await releaseExpiredPickup(id, req.user!.id);
+
+  await logActivity({
+    userId: req.user!.id,
+    actorName: req.user!.fullName,
+    action: 'loan.cancel',
+    entityType: 'loan',
+    entityId: id,
+    description: `Melepas peminjaman "${loan.book.title}" yang tidak diambil`,
+    ipAddress: req.ip ?? undefined,
+  });
+
+  res.json({ success: true, data: loan, message: 'Peminjaman dilepas dan stok dikembalikan.' });
+});
+
 export const requestReturn = asyncHandler(async (req: Request, res: Response) => {
   const id = Number(req.params.id);
   const isAdmin = req.user!.role === 'admin';
@@ -177,18 +276,21 @@ export const confirmReturn = asyncHandler(async (req: Request, res: Response) =>
     entityType: 'loan',
     entityId: id,
     description: `Menerima pengembalian "${loan.book.title}" dari ${loan.member.fullName}`,
-    metadata: { condition: body.condition ?? 'good', daysLate: loan.daysLate },
+    metadata: {
+      condition: body.condition ?? 'good',
+      daysLate: loan.daysLate,
+      unpaidFines: loan.unpaidFines,
+    },
     ipAddress: req.ip ?? undefined,
   });
 
-  res.json({
-    success: true,
-    data: loan,
-    message:
-      loan.daysLate && loan.daysLate > 0
-        ? `Pengembalian tercatat. Buku terlambat ${loan.daysLate} hari.`
-        : 'Pengembalian berhasil dicatat.',
-  });
+  const parts: string[] = ['Pengembalian berhasil dicatat.'];
+  if (loan.daysLate && loan.daysLate > 0) parts.push(`Terlambat ${loan.daysLate} hari.`);
+  if (loan.unpaidFines > 0) {
+    parts.push(`Total denda belum lunas: Rp${loan.unpaidFines.toLocaleString('id-ID')}.`);
+  }
+
+  res.json({ success: true, data: loan, message: parts.join(' ') });
 });
 
 export const updateNote = asyncHandler(async (req: Request, res: Response) => {

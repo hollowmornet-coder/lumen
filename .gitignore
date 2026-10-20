@@ -3,3 +3,6 @@ dist/
 _vendor/
 .env
 *.log
+
+# Konfigurasi agen/editor milik mesin lokal, bukan bagian aplikasi.
+opencode.jsonc

@@ -13,6 +13,7 @@ export interface AuthUserRow {
   phone: string | null;
   member_code: string | null;
   last_login_at: string | null;
+  must_change_password: number;
 }
 
 export interface PublicUser {
@@ -26,6 +27,11 @@ export interface PublicUser {
   memberCode: string | null;
   status: UserStatus;
   lastLoginAt: string | null;
+  /**
+   * Set for accounts created by the Excel importer, which share one batch
+   * password. The client shows a "change your password" gate when true.
+   */
+  mustChangePassword: boolean;
 }
 
 export function toPublicUser(row: AuthUserRow): PublicUser {
@@ -40,5 +46,6 @@ export function toPublicUser(row: AuthUserRow): PublicUser {
     memberCode: row.member_code,
     status: row.status,
     lastLoginAt: row.last_login_at,
+    mustChangePassword: Boolean(row.must_change_password),
   };
 }

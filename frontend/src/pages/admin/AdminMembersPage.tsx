@@ -4,6 +4,8 @@ import { toast } from 'sonner';
 import {
   Copy,
   Download,
+  FileDown,
+  IdCard,
   KeyRound,
   Pencil,
   Plus,
@@ -14,6 +16,7 @@ import {
   ShieldCheck,
   SlidersHorizontal,
   Trash2,
+  Upload,
   UserPlus,
   Users,
   X,
@@ -31,6 +34,7 @@ import {
 } from '@/components/ui/dialog';
 import { Field, Input, Select, Textarea } from '@/components/ui/input';
 import { Pagination } from '@/components/ui/pagination';
+import { QrCode } from '@/components/ui/qr-code';
 import { TableSkeleton } from '@/components/ui/skeleton';
 import { EmptyState, ErrorState, NoResultsState } from '@/components/ui/states';
 import { api, ApiError, downloadFile, type ApiSuccess } from '@/lib/api';
@@ -43,6 +47,7 @@ import {
 import { formatDate, formatNumber, initials } from '@/lib/utils';
 import { staggerContainer, staggerItem } from '@/lib/motion';
 import type { Member } from '@/types';
+import { MemberImportDialog } from './MemberImportDialog';
 
 /** Motion collapses to a static state when the OS asks for less movement. */
 const STILL: Variants = { hidden: {}, show: {} };
@@ -245,6 +250,7 @@ export default function AdminMembersPage() {
     temporaryPassword?: string;
   } | null>(null);
   const [exporting, setExporting] = React.useState(false);
+  const [importOpen, setImportOpen] = React.useState(false);
 
   const items = members.data?.items ?? [];
   const meta = members.data?.meta;
@@ -271,6 +277,15 @@ export default function AdminMembersPage() {
     }
   };
 
+  const handleTemplate = async () => {
+    try {
+      await downloadFile('/excel/template/members', undefined, 'lumen-template-impor-anggota.xlsx');
+      toast.success('Template impor diunduh.');
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Gagal mengunduh template.');
+    }
+  };
+
   return (
     <>
       <PageHeader
@@ -283,6 +298,14 @@ export default function AdminMembersPage() {
         ]}
         actions={
           <>
+            <Button variant="outline" size="sm" onClick={() => void handleTemplate()}>
+              <FileDown className="size-3.5" aria-hidden />
+              Template
+            </Button>
+            <Button variant="outline" size="sm" onClick={() => setImportOpen(true)}>
+              <Upload className="size-3.5" aria-hidden />
+              Impor Excel
+            </Button>
             <Button
               variant="outline"
               size="sm"
@@ -625,6 +648,12 @@ export default function AdminMembersPage() {
         onCreated={(result) => setCredentials(result)}
       />
 
+      <MemberImportDialog
+        open={importOpen}
+        onOpenChange={setImportOpen}
+        onImported={() => void members.refetch()}
+      />
+
       <EditMemberDialog
         member={editing}
         onClose={() => setEditing(null)}
@@ -686,6 +715,8 @@ function MemberActions({
       </Button>
 
       <ResetPasswordDialog member={member} resetPassword={actions.resetPassword} />
+
+      <MemberCardDialog member={member} />
 
       <Button
         variant="ghost"
@@ -1159,6 +1190,94 @@ function EditMemberDialog({
 }
 
 /* ------------------------------------------------------------------ */
+
+/**
+ * Printable member card.
+ *
+ * The QR payload is the member code alone, not a URL: a URL would encode the
+ * deployment host, so every card printed before a domain change would stop
+ * scanning. The desk resolves the code server-side instead.
+ */
+function MemberCardDialog({ member }: { member: Member }) {
+  const [open, setOpen] = React.useState(false);
+
+  if (!member.memberCode) {
+    return (
+      <Button
+        variant="ghost"
+        size="icon-sm"
+        disabled
+        aria-label={`Kartu anggota ${member.fullName} tidak tersedia`}
+        title="Anggota ini belum memiliki kode anggota"
+      >
+        <IdCard className="size-3.5" aria-hidden />
+      </Button>
+    );
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <Button
+        variant="ghost"
+        size="icon-sm"
+        onClick={() => setOpen(true)}
+        aria-label={`Tampilkan kartu anggota ${member.fullName}`}
+        title="Kartu anggota (QR)"
+      >
+        <IdCard className="size-3.5" aria-hidden />
+      </Button>
+
+      <DialogContent
+        title="Kartu Anggota"
+        description="Tunjukkan atau cetak kartu ini. Petugas memindai kode QR di meja sirkulasi."
+        size="sm"
+        footer={
+          <>
+            <Button
+              variant="outline"
+              onClick={() => {
+                void navigator.clipboard
+                  ?.writeText(member.memberCode ?? '')
+                  .then(() => toast.success('Kode anggota disalin.'))
+                  .catch(() => toast.error('Gagal menyalin kode.'));
+              }}
+            >
+              <Copy className="size-4" aria-hidden />
+              Salin kode
+            </Button>
+            <DialogClose asChild>
+              <Button>Tutup</Button>
+            </DialogClose>
+          </>
+        }
+      >
+        <div className="flex flex-col items-center gap-3">
+          <QrCode
+            value={member.memberCode}
+            caption={member.memberCode}
+            label={`Kartu anggota ${member.fullName}`}
+            size={200}
+          />
+
+          <div className="text-center">
+            <p className="font-display text-sm font-semibold text-foreground">
+              {member.fullName}
+            </p>
+            <p className="text-2xs text-muted-foreground">
+              {[member.className, member.username].filter(Boolean).join(' · ')}
+            </p>
+          </div>
+
+          <p className="text-center text-2xs leading-relaxed text-muted-foreground">
+            Kode QR hanya memuat kode anggota, bukan data pribadi. Pindai di{' '}
+            <span className="font-medium text-foreground">Meja Sirkulasi</span> untuk mengisi
+            data anggota secara otomatis.
+          </p>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
 
 function ResetPasswordDialog({
   member,

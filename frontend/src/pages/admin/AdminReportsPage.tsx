@@ -7,6 +7,7 @@ import {
   ClipboardList,
   FileSpreadsheet,
   Flame,
+  HandCoins,
   Info,
   Library,
   PackageCheck,
@@ -24,9 +25,9 @@ import { Field, Input, Select } from '@/components/ui/input';
 import { ChartSkeleton } from '@/components/ui/skeleton';
 import { HeadlineFigure, StatCard } from '@/components/ui/stat-card';
 import { EmptyState, ErrorState } from '@/components/ui/states';
-import { useAdminCharts, useListParams } from '@/hooks/useApi';
+import { useAdminCharts, useAdminReports, useListParams } from '@/hooks/useApi';
 import { ApiError, downloadFile } from '@/lib/api';
-import { cn, formatNumber, toInputDate } from '@/lib/utils';
+import { cn, formatNumber, formatRupiah, toInputDate } from '@/lib/utils';
 import { staggerContainer, staggerItem } from '@/lib/motion';
 
 /** Motion collapses to a static state when the OS asks for less movement. */
@@ -118,6 +119,7 @@ export default function AdminReportsPage() {
   const [busy, setBusy] = React.useState<string | null>(null);
 
   const charts = useAdminCharts({ from, to, bucket });
+  const reports = useAdminReports({ from, to });
 
   const reduce = useReducedMotion();
   const containerVariants = reduce ? STILL : staggerContainer(0.04);
@@ -452,6 +454,228 @@ export default function AdminReportsPage() {
               />
             ) : (
               <TopBooksChart data={charts.data?.topBooks ?? []} />
+            )}
+          </div>
+        </section>
+
+        {/* ---------- Circulation health ---------- */}
+        <section className="space-y-4" aria-label="Kesehatan sirkulasi">
+          <div className="grid gap-4 lg:grid-cols-3">
+            {/* Fine ledger */}
+            <div className="panel p-5 lg:col-span-2">
+              <header className="mb-4 flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <h2 className="font-display text-base font-semibold">Buku Tidak Pernah Dipinjam</h2>
+                  <p className="text-xs text-muted-foreground">
+                    Koleksi yang belum pernah keluar dari rak — kandidat promosi atau penyiangan
+                  </p>
+                </div>
+                <Badge tone="warning">
+                  {formatNumber(reports.data?.neverBorrowed.length ?? 0)} judul
+                </Badge>
+              </header>
+
+              {reports.isLoading ? (
+                <div className="space-y-2" role="status" aria-label="Memuat daftar buku">
+                  {Array.from({ length: 3 }).map((_, i) => (
+                    <div key={i} className="h-10 rounded-lg skeleton" />
+                  ))}
+                </div>
+              ) : (reports.data?.neverBorrowed.length ?? 0) === 0 ? (
+                <EmptyState
+                  icon={BookOpen}
+                  title="Semua koleksi pernah dipinjam"
+                  description="Tidak ada buku yang menganggur sepanjang riwayat perpustakaan."
+                  className="py-8"
+                />
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full min-w-[520px] border-collapse text-sm">
+                    <caption className="sr-only">
+                      Daftar buku yang belum pernah dipinjam beserta stok tersedia
+                    </caption>
+                    <thead>
+                      <tr className="border-b border-border">
+                        {['Judul', 'Kategori', 'Stok', 'Ditambahkan'].map((h) => (
+                          <th
+                            key={h}
+                            scope="col"
+                            className="px-2 py-2 text-left text-2xs font-semibold uppercase tracking-wider text-muted-foreground"
+                          >
+                            {h}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {reports.data?.neverBorrowed.slice(0, 10).map((b) => (
+                        <tr key={b.id} className="border-b border-border last:border-0">
+                          <td className="px-2 py-2.5">
+                            <p className="max-w-[16rem] truncate font-medium text-foreground">
+                              {b.title}
+                            </p>
+                            <p className="truncate text-2xs text-muted-foreground">{b.author}</p>
+                          </td>
+                          <td className="px-2 py-2.5 text-xs text-muted-foreground">
+                            {b.categoryName ?? '—'}
+                          </td>
+                          <td className="whitespace-nowrap px-2 py-2.5 text-xs tabular-nums text-muted-foreground">
+                            {formatNumber(b.availableCopies)}/{formatNumber(b.totalCopies)}
+                          </td>
+                          <td className="whitespace-nowrap px-2 py-2.5 text-xs text-muted-foreground">
+                            {toInputDate(b.createdAt)}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+
+            {/* Fine totals */}
+            <div className="panel p-5">
+              <header className="mb-4 flex items-center gap-2">
+                <span className="flex size-8 items-center justify-center rounded-lg bg-warning-soft text-warning">
+                  <HandCoins className="size-4" aria-hidden />
+                </span>
+                <div>
+                  <h2 className="font-display text-base font-semibold">Ringkasan Denda</h2>
+                  <p className="text-xs text-muted-foreground">Seluruh periode, bukan hanya rentang</p>
+                </div>
+              </header>
+
+              {reports.isLoading ? (
+                <div className="space-y-3" role="status" aria-label="Memuat ringkasan denda">
+                  {Array.from({ length: 4 }).map((_, i) => (
+                    <div key={i} className="h-8 rounded skeleton" />
+                  ))}
+                </div>
+              ) : (
+                <dl className="space-y-2.5 text-sm">
+                  <div className="flex items-center justify-between gap-3">
+                    <dt className="text-muted-foreground">Total ditagihkan</dt>
+                    <dd className="font-semibold tabular-nums text-foreground">
+                      {formatRupiah(reports.data?.fines.totals.charged ?? 0)}
+                    </dd>
+                  </div>
+                  <div className="flex items-center justify-between gap-3">
+                    <dt className="text-muted-foreground">Sudah diterima</dt>
+                    <dd className="font-semibold tabular-nums text-success">
+                      {formatRupiah(reports.data?.fines.totals.collected ?? 0)}
+                    </dd>
+                  </div>
+                  <div className="flex items-center justify-between gap-3">
+                    <dt className="text-muted-foreground">Belum lunas</dt>
+                    <dd className="font-semibold tabular-nums text-destructive">
+                      {formatRupiah(reports.data?.fines.totals.outstanding ?? 0)}
+                    </dd>
+                  </div>
+                  <div className="flex items-center justify-between gap-3 border-t border-border pt-2.5">
+                    <dt className="text-muted-foreground">Dibebaskan</dt>
+                    <dd className="font-semibold tabular-nums text-muted-foreground">
+                      {formatRupiah(reports.data?.fines.totals.waived ?? 0)}
+                    </dd>
+                  </div>
+                </dl>
+              )}
+
+              <div className="mt-4 space-y-1.5 border-t border-border pt-3">
+                <p className="eyebrow">Per jenis</p>
+                {(reports.data?.fines.byKind ?? []).map((row) => (
+                  <div key={row.kind} className="flex items-center justify-between gap-2 text-xs">
+                    <span className="capitalize text-muted-foreground">{row.kind}</span>
+                    <span className="tabular-nums text-foreground">
+                      {formatNumber(row.count)}× · {formatRupiah(row.total)}
+                    </span>
+                  </div>
+                ))}
+                {(reports.data?.fines.byKind.length ?? 0) === 0 ? (
+                  <p className="text-xs text-muted-foreground">Belum ada denda tercatat.</p>
+                ) : null}
+              </div>
+            </div>
+          </div>
+
+          {/* Late members */}
+          <div className="panel overflow-hidden">
+            <header className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-5 py-4">
+              <div>
+                <h2 className="font-display text-base font-semibold">Anggota Paling Sering Terlambat</h2>
+                <p className="text-xs text-muted-foreground">
+                  Dasar pembinaan: siapa yang perlu diingatkan lebih dulu
+                </p>
+              </div>
+              <Badge tone="danger">
+                {formatNumber(reports.data?.lateMembers.length ?? 0)} anggota
+              </Badge>
+            </header>
+
+            {reports.isLoading ? (
+              <div className="space-y-2 p-4" role="status" aria-label="Memuat anggota terlambat">
+                {Array.from({ length: 3 }).map((_, i) => (
+                  <div key={i} className="h-10 rounded-lg skeleton" />
+                ))}
+              </div>
+            ) : (reports.data?.lateMembers.length ?? 0) === 0 ? (
+              <EmptyState
+                icon={PackageCheck}
+                title="Tidak ada keterlambatan aktif"
+                description="Semua peminjaman berjalan masih dalam masa pinjam."
+                className="py-8"
+              />
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[560px] border-collapse text-sm">
+                  <caption className="sr-only">
+                    Anggota dengan peminjaman terlambat dan total denda belum lunas
+                  </caption>
+                  <thead>
+                    <tr className="border-b border-border bg-muted/40">
+                      {['Anggota', 'Terlambat', 'Total hari', 'Denda belum lunas'].map((h, i) => (
+                        <th
+                          key={h}
+                          scope="col"
+                          className={cn(
+                            'px-4 py-2.5 text-2xs font-semibold uppercase tracking-wider text-muted-foreground',
+                            i === 0 ? 'text-left' : 'text-right',
+                          )}
+                        >
+                          {h}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {reports.data?.lateMembers.map((m) => (
+                      <tr key={m.id} className="border-b border-border last:border-0">
+                        <td className="px-4 py-2.5">
+                          <p className="font-medium text-foreground">{m.fullName}</p>
+                          <p className="font-mono text-2xs text-muted-foreground">
+                            {m.memberCode ?? '—'}
+                          </p>
+                        </td>
+                        <td className="px-4 py-2.5 text-right tabular-nums text-foreground">
+                          {formatNumber(m.overdueCount)} transaksi
+                        </td>
+                        <td className="px-4 py-2.5 text-right tabular-nums text-muted-foreground">
+                          {formatNumber(m.totalLateDays)} hari
+                        </td>
+                        <td className="px-4 py-2.5 text-right tabular-nums">
+                          <span
+                            className={cn(
+                              'font-semibold',
+                              m.unpaidFines > 0 ? 'text-destructive' : 'text-muted-foreground',
+                            )}
+                          >
+                            {formatRupiah(m.unpaidFines)}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             )}
           </div>
         </section>

@@ -1,0 +1,29 @@
+# Jangan kirim ke daemon Docker — membuat build context membengkak
+# dan berisiko menyalin artefak lokal yang salah ke dalam image.
+
+# Dependensi & hasil build (dibangun ulang di dalam image)
+**/node_modules
+**/dist
+
+# Rahasia & konfigurasi lokal
+**/.env
+**/.env.*
+!**/.env.example
+
+# Basis data portabel & berkas besar
+_vendor/
+*.pdf
+
+# Sampah editor / OS
+**/.git
+**/.gitignore
+**/.vscode
+**/.idea
+**/*.log
+**/Thumbs.db
+**/.DS_Store
+
+# Dokumentasi & skrip pengujian tidak dibutuhkan saat runtime
+docs/
+scripts/
+migrations/

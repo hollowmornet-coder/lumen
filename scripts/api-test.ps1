@@ -1,4 +1,4 @@
-﻿# =====================================================================
+# =====================================================================
 #  LUMEN - API Smoke Test
 #  Menguji alur inti: login, RBAC, peminjaman, stok, pengembalian.
 #  Jalankan:  powershell -ExecutionPolicy Bypass -File scripts\api-test.ps1
@@ -77,6 +77,65 @@ function Invoke-Api {
       } catch { }
     }
     return @{ Status = $status; Json = $json }
+  }
+}
+
+# Upload helper for the Excel import endpoints.
+# Invoke-WebRequest -Form needs PowerShell 6+, so the multipart body is built
+# by hand here and posted with HttpClient, which works on 5.1 too.
+function Invoke-ApiUpload {
+  param(
+    [string]$Path,
+    [string]$FilePath,
+    [string]$Token,
+    [string]$FieldName = "file",
+    [hashtable]$Fields = $null
+  )
+  Add-Type -AssemblyName System.Net.Http | Out-Null
+  $client = New-Object System.Net.Http.HttpClient
+  $client.DefaultRequestHeaders.Authorization =
+    New-Object System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", $Token)
+
+  $content = New-Object System.Net.Http.MultipartFormDataContent
+  if ($Fields) {
+    foreach ($key in $Fields.Keys) {
+      $stringContent = New-Object System.Net.Http.StringContent([string]$Fields[$key])
+      $content.Add($stringContent, $key)
+    }
+  }
+  $bytes = [System.IO.File]::ReadAllBytes($FilePath)
+  $fileContent = New-Object System.Net.Http.ByteArrayContent($bytes, 0, $bytes.Length)
+  $fileContent.Headers.ContentType =
+    New-Object System.Net.Http.Headers.MediaTypeHeaderValue("application/octet-stream")
+  $content.Add($fileContent, $FieldName, [System.IO.Path]::GetFileName($FilePath))
+
+  $response = $client.PostAsync("$BaseUrl$Path", $content).GetAwaiter().GetResult()
+  $text = $response.Content.ReadAsStringAsync().GetAwaiter().GetResult()
+  $status = [int]$response.StatusCode
+  $client.Dispose()
+
+  $json = $null
+  try { $json = $text | ConvertFrom-Json } catch { }
+  return @{ Status = $status; Json = $json }
+}
+
+# Downloads a binary endpoint to a temp file; returns @{ Status; Path; Size }.
+function Invoke-ApiDownload {
+  param([string]$Path, [string]$Token, [string]$FileName)
+  $dir = Join-Path $env:TEMP "lumen-api-test"
+  New-Item -ItemType Directory -Force -Path $dir | Out-Null
+  $file = Join-Path $dir $FileName
+  if (Test-Path $file) { Remove-Item $file -Force }
+  try {
+    Invoke-WebRequest -Uri "$BaseUrl$Path" `
+      -Headers @{ Authorization = "Bearer $Token" } `
+      -OutFile $file -UseBasicParsing | Out-Null
+    $size = (Get-Item $file).Length
+    return @{ Status = 200; Path = $file; Size = $size }
+  } catch {
+    $status = 0
+    if ($_.Exception.Response) { $status = [int]$_.Exception.Response.StatusCode }
+    return @{ Status = $status; Path = $null; Size = 0 }
   }
 }
 
@@ -503,6 +562,351 @@ Assert-True "Berkas sampul dapat diambil lewat server" ($coverStatus -eq 200) "g
 $tereBooks = @($withCover.Json.data | Where-Object { $_.author -eq "Tere Liye" })
 Assert-True "Buku Tere Liye masuk ke inventaris" ($tereBooks.Count -ge 10) "jumlah=$($tereBooks.Count)"
 Assert-True "Buku Tere Liye memiliki sampul" (@($tereBooks | Where-Object { $_.coverPath }).Count -ge 8)
+
+# ---------------------------------------------------------------- HOLIDAYS
+Write-Host "`n[16] Hari Libur & Jatuh Tempo" -ForegroundColor Yellow
+$holidays = Invoke-Api -Method GET -Path "/holidays?year=2026" -Token $userToken
+Assert-True "Siswa boleh membaca kalender hari libur" ($holidays.Status -eq 200) "got $($holidays.Status)"
+Assert-True "Seed hari libur 2026 termuat" (@($holidays.Json.data).Count -ge 10) "jumlah=$(@($holidays.Json.data).Count)"
+
+$newHoliday = Invoke-Api -Method POST -Path "/holidays" -Body @{ date = "2026-10-05"; name = "Libur Uji Otomatis" } -Token $adminToken
+Assert-True "Admin dapat menambah hari libur" ($newHoliday.Status -eq 201) "got $($newHoliday.Status) $($newHoliday.Json.message)"
+$holidayId = $newHoliday.Json.data.id
+
+$dupHoliday = Invoke-Api -Method POST -Path "/holidays" -Body @{ date = "2026-10-05"; name = "Duplikat" } -Token $adminToken
+Assert-True "Tanggal libur kembar ditolak (409)" ($dupHoliday.Status -eq 409) "got $($dupHoliday.Status)"
+
+$badHoliday = Invoke-Api -Method POST -Path "/holidays" -Body @{ date = "05-10-2026"; name = "Format Salah" } -Token $adminToken
+Assert-True "Format tanggal libur salah ditolak (422)" ($badHoliday.Status -eq 422) "got $($badHoliday.Status)"
+
+$userHolidayWrite = Invoke-Api -Method POST -Path "/holidays" -Body @{ date = "2026-10-06"; name = "Coba Siswa" } -Token $userToken
+Assert-True "Siswa tidak boleh menambah hari libur (403)" ($userHolidayWrite.Status -eq 403) "got $($userHolidayWrite.Status)"
+
+# A due date must never land on a Sunday, whatever day the test runs.
+$probeBook = Invoke-Api -Method POST -Path "/books" -Body @{
+  isbn = "978-602-$((Get-Random -Minimum 100000 -Maximum 999999))-9"
+  title = "Uji Geser Jatuh Tempo"
+  author = "Penguji"
+  totalCopies = 1
+} -Token $adminToken
+if ($probeBook.Status -eq 201) {
+  $probeId = $probeBook.Json.data.id
+  $probeReq = Invoke-Api -Method POST -Path "/loans" -Body @{ bookId = $probeId } -Token $userToken
+  $probeAppr = Invoke-Api -Method POST -Path "/loans/$($probeReq.Json.data.id)/approve" -Token $adminToken
+  $dueAt = $probeAppr.Json.data.dueAt
+  $dueDay = ([datetime]$dueAt).DayOfWeek
+  Assert-True "Jatuh tempo tidak pernah jatuh pada hari Minggu" ($dueDay -ne "Sunday") "dueAt=$dueAt day=$dueDay"
+  Invoke-Api -Method POST -Path "/loans/$($probeReq.Json.data.id)/cancel" -Token $adminToken | Out-Null
+  Invoke-Api -Method DELETE -Path "/books/$probeId" -Token $adminToken | Out-Null
+} else {
+  Write-Host "  [SKIP] Buku probe gagal dibuat: $($probeBook.Json.message)" -ForegroundColor Yellow
+}
+
+$delHoliday = Invoke-Api -Method DELETE -Path "/holidays/$holidayId" -Token $adminToken
+Assert-True "Admin dapat menghapus hari libur" ($delHoliday.Status -eq 200) "got $($delHoliday.Status)"
+$delAgain = Invoke-Api -Method DELETE -Path "/holidays/$holidayId" -Token $adminToken
+Assert-True "Menghapus hari libur yang sama dua kali menghasilkan 404" ($delAgain.Status -eq 404) "got $($delAgain.Status)"
+
+# ---------------------------------------------------------------- RESERVATIONS
+Write-Host "`n[17] Reservasi & Antrean" -ForegroundColor Yellow
+$resTarget = Invoke-Api -Method GET -Path "/books?pageSize=100" -Token $userToken |
+  ForEach-Object { $_.Json.data } |
+  Where-Object { $_.availableCopies -gt 0 -and $_.id -ne $bookId } |
+  Select-Object -First 1
+$resBookId = $resTarget.id
+
+$res = Invoke-Api -Method POST -Path "/reservations" -Body @{ bookId = $resBookId; note = "Uji antrean" } -Token $userToken
+Assert-True "Siswa dapat masuk antrean" ($res.Status -eq 201) "got $($res.Status) $($res.Json.message)"
+Assert-True "Antrean pertama berada di posisi 1" ($res.Json.data.queuePosition -eq 1) "pos=$($res.Json.data.queuePosition)"
+
+$resDup = Invoke-Api -Method POST -Path "/reservations" -Body @{ bookId = $resBookId } -Token $userToken
+Assert-True "Antrean ganda untuk buku sama ditolak (422)" ($resDup.Status -eq 422) "got $($resDup.Status) $($resDup.Json.code)"
+
+$myRes = Invoke-Api -Method GET -Path "/reservations/mine" -Token $userToken
+Assert-True "Daftar antrean saya berbentuk array" ($myRes.Json.data -is [System.Array] -or $myRes.Json.data -is [System.Collections.ArrayList]) "tipe=$($myRes.Json.data.GetType().Name)"
+Assert-True "Antrean baru muncul di daftar saya" (@($myRes.Json.data | Where-Object { $_.id -eq $res.Json.data.id }).Count -eq 1)
+
+$userResList = Invoke-Api -Method GET -Path "/reservations" -Token $userToken
+Assert-True "Siswa tidak boleh melihat seluruh antrean (403)" ($userResList.Status -eq 403) "got $($userResList.Status)"
+
+$adminResList = Invoke-Api -Method GET -Path "/reservations?pageSize=5" -Token $adminToken
+Assert-True "Admin dapat melihat antrean (berpaginasi)" ($adminResList.Status -eq 200 -and $null -ne $adminResList.Json.meta) "got $($adminResList.Status)"
+
+$queue = Invoke-Api -Method GET -Path "/reservations/queue/overview" -Token $adminToken
+Assert-True "Ringkasan antrean tersedia untuk admin" ($queue.Status -eq 200) "got $($queue.Status)"
+
+$resCancel = Invoke-Api -Method POST -Path "/reservations/$($res.Json.data.id)/cancel" -Token $userToken
+Assert-True "Siswa dapat membatalkan antreannya" ($resCancel.Status -eq 200) "got $($resCancel.Status)"
+
+# ---------------------------------------------------------------- REVIEWS / WISHLIST / ANNOUNCEMENTS
+Write-Host "`n[18] Ulasan, Daftar Keinginan & Pengumuman" -ForegroundColor Yellow
+# $bookId was borrowed and returned in [5]-[7], so the loan requirement is met.
+$review = Invoke-Api -Method POST -Path "/reviews/book/$bookId" -Body @{ rating = 5; comment = "Buku bagus, uji otomatis." } -Token $userToken
+Assert-True "Anggota yang pernah meminjam dapat menulis ulasan" ($review.Status -eq 201) "got $($review.Status) $($review.Json.message)"
+$reviewId = $review.Json.data.id
+
+$stats1 = Invoke-Api -Method GET -Path "/reviews/book/$bookId/stats" -Token $userToken
+Assert-True "Statistik ulasan menghitung rata-rata" ($stats1.Json.data.average -eq 5 -and $stats1.Json.data.total -eq 1) "avg=$($stats1.Json.data.average) total=$($stats1.Json.data.total)"
+
+$reviewEdit = Invoke-Api -Method POST -Path "/reviews/book/$bookId" -Body @{ rating = 4; comment = "Revisi ulasan." } -Token $userToken
+Assert-True "Ulasan kedua memperbarui, bukan menambah baris" ($reviewEdit.Json.data.id -eq $reviewId) "id lama=$reviewId baru=$($reviewEdit.Json.data.id)"
+$stats2 = Invoke-Api -Method GET -Path "/reviews/book/$bookId/stats" -Token $userToken
+Assert-True "Jumlah ulasan tetap 1 setelah diperbarui" ($stats2.Json.data.total -eq 1 -and $stats2.Json.data.average -eq 4) "total=$($stats2.Json.data.total) avg=$($stats2.Json.data.average)"
+
+$myReview = Invoke-Api -Method GET -Path "/reviews/book/$bookId/mine" -Token $userToken
+Assert-True "Ulasan saya terbaca kembali" ($myReview.Json.data.rating -eq 4) "rating=$($myReview.Json.data.rating)"
+
+$badRating = Invoke-Api -Method POST -Path "/reviews/book/$bookId" -Body @{ rating = 9 } -Token $userToken
+Assert-True "Rating di luar 1-5 ditolak (422)" ($badRating.Status -eq 422) "got $($badRating.Status)"
+
+$delReview = Invoke-Api -Method DELETE -Path "/reviews/$reviewId" -Token $userToken
+Assert-True "Penulis dapat menghapus ulasannya" ($delReview.Status -eq 200) "got $($delReview.Status)"
+
+# Wishlist
+$wish = Invoke-Api -Method POST -Path "/wishlist" -Body @{ bookId = $resBookId } -Token $userToken
+Assert-True "Buku dapat disimpan ke daftar keinginan" ($wish.Status -eq 201) "got $($wish.Status)"
+$wishAgain = Invoke-Api -Method POST -Path "/wishlist" -Body @{ bookId = $resBookId } -Token $userToken
+Assert-True "Menyimpan buku yang sama bersifat idempoten (tidak error)" ($wishAgain.Status -eq 201) "got $($wishAgain.Status)"
+
+$wishList = Invoke-Api -Method GET -Path "/wishlist" -Token $userToken
+Assert-True "Daftar keinginan berisi buku yang disimpan" (@($wishList.Json.data | Where-Object { $_.bookId -eq $resBookId }).Count -eq 1) "total=$($wishList.Json.meta.total)"
+Assert-True "Daftar keinginan tidak mengunci stok" ($wishList.Json.data[0].availableCopies -ge 0) "avail=$($wishList.Json.data[0].availableCopies)"
+
+$marks = Invoke-Api -Method GET -Path "/wishlist/check?bookIds=$resBookId,999999" -Token $userToken
+Assert-True "Penanda hati batch hanya mengembalikan buku yang disimpan" (@($marks.Json.data).Count -eq 1 -and $marks.Json.data[0] -eq $resBookId) "data=$($marks.Json.data -join ',')"
+
+$userDemand = Invoke-Api -Method GET -Path "/wishlist/demand" -Token $userToken
+Assert-True "Siswa tidak boleh melihat laporan permintaan (403)" ($userDemand.Status -eq 403) "got $($userDemand.Status)"
+$adminDemand = Invoke-Api -Method GET -Path "/wishlist/demand" -Token $adminToken
+Assert-True "Admin dapat melihat laporan permintaan" ($adminDemand.Status -eq 200) "got $($adminDemand.Status)"
+
+$wishDel = Invoke-Api -Method DELETE -Path "/wishlist/$resBookId" -Token $userToken
+Assert-True "Buku dapat dihapus dari daftar keinginan" ($wishDel.Status -eq 200) "got $($wishDel.Status)"
+$wishDelAgain = Invoke-Api -Method DELETE -Path "/wishlist/$resBookId" -Token $userToken
+Assert-True "Menghapus dua kali menghasilkan 404" ($wishDelAgain.Status -eq 404) "got $($wishDelAgain.Status)"
+
+# Announcements
+$ann = Invoke-Api -Method POST -Path "/announcements" -Body @{ title = "Uji Pengumuman"; body = "Isi pengumuman otomatis."; audience = "user"; pinned = $true } -Token $adminToken
+Assert-True "Admin dapat menerbitkan pengumuman" ($ann.Status -eq 201) "got $($ann.Status) $($ann.Json.message)"
+$annId = $ann.Json.data.id
+Assert-True "Pengumuman tersemat ditandai pinned" ($ann.Json.data.pinned -eq $true) "pinned=$($ann.Json.data.pinned)"
+
+$annUser = Invoke-Api -Method GET -Path "/announcements?pageSize=50" -Token $userToken
+Assert-True "Siswa melihat pengumuman untuk anggota" (@($annUser.Json.data | Where-Object { $_.id -eq $annId }).Count -eq 1)
+
+$annAdminOnly = Invoke-Api -Method POST -Path "/announcements" -Body @{ title = "Catatan Petugas"; body = "Hanya untuk petugas."; audience = "admin" } -Token $adminToken
+$adminAnnId = $annAdminOnly.Json.data.id
+$annUser2 = Invoke-Api -Method GET -Path "/announcements?pageSize=50" -Token $userToken
+Assert-True "Pengumuman khusus petugas tidak terlihat oleh siswa" (@($annUser2.Json.data | Where-Object { $_.id -eq $adminAnnId }).Count -eq 0)
+$annDetailLeak = Invoke-Api -Method GET -Path "/announcements/$adminAnnId" -Token $userToken
+Assert-True "Siswa tidak bisa membaca pengumuman petugas lewat id (404)" ($annDetailLeak.Status -eq 404) "got $($annDetailLeak.Status)"
+
+$annPatch = Invoke-Api -Method PATCH -Path "/announcements/$annId" -Body @{ title = "Uji Pengumuman (revisi)" } -Token $adminToken
+Assert-True "Pengumuman dapat diperbarui" ($annPatch.Status -eq 200 -and $annPatch.Json.data.title -like "*revisi*") "got $($annPatch.Status)"
+
+$userAnnWrite = Invoke-Api -Method POST -Path "/announcements" -Body @{ title = "Coba Siswa"; body = "Tidak boleh." } -Token $userToken
+Assert-True "Siswa tidak boleh menerbitkan pengumuman (403)" ($userAnnWrite.Status -eq 403) "got $($userAnnWrite.Status)"
+
+Invoke-Api -Method DELETE -Path "/announcements/$annId" -Token $adminToken | Out-Null
+Invoke-Api -Method DELETE -Path "/announcements/$adminAnnId" -Token $adminToken | Out-Null
+$annGone = Invoke-Api -Method GET -Path "/announcements/$annId" -Token $adminToken
+Assert-True "Pengumuman yang dihapus menghasilkan 404" ($annGone.Status -eq 404) "got $($annGone.Status)"
+
+# ---------------------------------------------------------------- VISITS / OPNAME / SCAN
+Write-Host "`n[19] Kunjungan, Stok Opname & Pindai" -ForegroundColor Yellow
+$visit = Invoke-Api -Method POST -Path "/visits" -Body @{ userId = $userId; purpose = "read" } -Token $adminToken
+Assert-True "Kunjungan anggota tercatat (201)" ($visit.Status -eq 201) "got $($visit.Status) $($visit.Json.message)"
+$visitAgain = Invoke-Api -Method POST -Path "/visits" -Body @{ userId = $userId; purpose = "read" } -Token $adminToken
+Assert-True "Pindai ulang di hari yang sama bukan error (200)" ($visitAgain.Status -eq 200) "got $($visitAgain.Status)"
+Assert-True "Kunjungan ganda memakai baris yang sama" ($visitAgain.Json.data.id -eq $visit.Json.data.id) "id=$($visitAgain.Json.data.id)"
+
+$visitGuest = Invoke-Api -Method POST -Path "/visits" -Body @{ guestName = "Tamu Uji"; purpose = "other" } -Token $adminToken
+Assert-True "Kunjungan tamu tanpa akun dapat dicatat" ($visitGuest.Status -eq 201) "got $($visitGuest.Status)"
+
+$visitNoName = Invoke-Api -Method POST -Path "/visits" -Body @{ purpose = "read" } -Token $adminToken
+Assert-True "Kunjungan tanpa anggota atau nama tamu ditolak (422)" ($visitNoName.Status -eq 422) "got $($visitNoName.Status)"
+
+$visitList = Invoke-Api -Method GET -Path "/visits?pageSize=10" -Token $adminToken
+Assert-True "Daftar kunjungan dapat dibaca admin" ($visitList.Status -eq 200 -and $visitList.Json.meta.total -ge 2) "total=$($visitList.Json.meta.total)"
+$visitSummary = Invoke-Api -Method GET -Path "/visits/summary" -Token $adminToken
+Assert-True "Ringkasan kunjungan menghitung hari ini" ($visitSummary.Json.data.today -ge 1) "today=$($visitSummary.Json.data.today)"
+$userVisitRead = Invoke-Api -Method GET -Path "/visits" -Token $userToken
+Assert-True "Siswa tidak boleh membaca data kunjungan (403)" ($userVisitRead.Status -eq 403) "got $($userVisitRead.Status)"
+
+# Opname: counted 2 of 3 present copies -> total becomes 2 after apply.
+$opBook = Invoke-Api -Method POST -Path "/books" -Body @{
+  isbn = "978-602-$((Get-Random -Minimum 100000 -Maximum 999999))-8"
+  title = "Uji Opname Stok"
+  author = "Penguji"
+  totalCopies = 3
+} -Token $adminToken
+if ($opBook.Status -eq 201) {
+  $opBookId = $opBook.Json.data.id
+  $op = Invoke-Api -Method POST -Path "/opnames" -Body @{ bookId = $opBookId; counted = 2; note = "Satu hilang" } -Token $adminToken
+  Assert-True "Sesi opname dibuat tanpa mengubah stok" ($op.Status -eq 201 -and $op.Json.data.expected -eq 3) "expected=$($op.Json.data.expected)"
+  Assert-True "Selisih opname dihitung" ($op.Json.data.difference -eq -1) "diff=$($op.Json.data.difference)"
+
+  $bookBeforeApply = Invoke-Api -Method GET -Path "/books/$opBookId" -Token $adminToken
+  Assert-True "Stok belum berubah sebelum opname diterapkan" ($bookBeforeApply.Json.data.totalCopies -eq 3) "total=$($bookBeforeApply.Json.data.totalCopies)"
+
+  $applied = Invoke-Api -Method POST -Path "/opnames/$($op.Json.data.id)/apply" -Token $adminToken
+  Assert-True "Opname dapat diterapkan ke stok" ($applied.Status -eq 200) "got $($applied.Status)"
+  $bookAfterApply = Invoke-Api -Method GET -Path "/books/$opBookId" -Token $adminToken
+  Assert-True "Total eksemplar mengikuti hasil hitung fisik" ($bookAfterApply.Json.data.totalCopies -eq 2) "total=$($bookAfterApply.Json.data.totalCopies)"
+  Assert-True "Eksemplar tersedia ikut menyesuaikan" ($bookAfterApply.Json.data.availableCopies -eq 2) "avail=$($bookAfterApply.Json.data.availableCopies)"
+
+  $applyAgain = Invoke-Api -Method POST -Path "/opnames/$($op.Json.data.id)/apply" -Token $adminToken
+  Assert-True "Opname yang sudah diterapkan tidak bisa diterapkan ulang (422)" ($applyAgain.Status -eq 422) "got $($applyAgain.Status)"
+
+  $opList = Invoke-Api -Method GET -Path "/opnames?status=applied" -Token $adminToken
+  Assert-True "Opname tersaring berdasarkan status" ($opList.Status -eq 200 -and $opList.Json.meta.total -ge 1) "total=$($opList.Json.meta.total)"
+
+  Invoke-Api -Method DELETE -Path "/books/$opBookId" -Token $adminToken | Out-Null
+} else {
+  Write-Host "  [SKIP] Buku opname gagal dibuat: $($opBook.Json.message)" -ForegroundColor Yellow
+}
+
+# Scan resolves the three code shapes through one endpoint.
+$scanMember = Invoke-Api -Method GET -Path "/scan?code=MBR-2026-001" -Token $adminToken
+Assert-True "Pindai kode anggota dikenali" ($scanMember.Status -eq 200 -and $scanMember.Json.data.kind -eq "member") "kind=$($scanMember.Json.data.kind)"
+$scanBook = Invoke-Api -Method GET -Path "/scan?code=$($target.isbn)" -Token $adminToken
+Assert-True "Pindai ISBN dikenali sebagai buku" ($scanBook.Status -eq 200 -and $scanBook.Json.data.kind -eq "book") "kind=$($scanBook.Json.data.kind)"
+$scanLoan = Invoke-Api -Method GET -Path "/scan?code=$($req.Json.data.loanCode)" -Token $adminToken
+Assert-True "Pindai kode nota dikenali sebagai transaksi" ($scanLoan.Status -eq 200 -and $scanLoan.Json.data.kind -eq "loan") "kind=$($scanLoan.Json.data.kind)"
+$scanUnknown = Invoke-Api -Method GET -Path "/scan?code=TIDAK-ADA-999" -Token $adminToken
+Assert-True "Kode tak dikenal menghasilkan 404" ($scanUnknown.Status -eq 404) "got $($scanUnknown.Status)"
+$scanUser = Invoke-Api -Method GET -Path "/scan?code=MBR-2026-001" -Token $userToken
+Assert-True "Siswa tidak boleh memakai pemindai meja (403)" ($scanUser.Status -eq 403) "got $($scanUser.Status)"
+
+# ---------------------------------------------------------------- BULK APPROVE
+Write-Host "`n[20] Persetujuan Massal" -ForegroundColor Yellow
+$bulkBook = Invoke-Api -Method POST -Path "/books" -Body @{
+  isbn = "978-602-$((Get-Random -Minimum 100000 -Maximum 999999))-7"
+  title = "Uji Persetujuan Massal"
+  author = "Penguji"
+  totalCopies = 1
+} -Token $adminToken
+if ($bulkBook.Status -eq 201) {
+  $bulkBookId = $bulkBook.Json.data.id
+  $r1 = Invoke-Api -Method POST -Path "/loans" -Body @{ bookId = $bulkBookId } -Token $userToken
+  $r2 = Invoke-Api -Method POST -Path "/loans" -Body @{ bookId = $bulkBookId } -Token $bimaToken
+
+  $bulk = Invoke-Api -Method POST -Path "/loans/bulk-approve" -Body @{ loanIds = @($r1.Json.data.id, $r2.Json.data.id) } -Token $adminToken
+  Assert-True "Persetujuan massal merespons 207 saat sebagian gagal" ($bulk.Status -eq 207) "got $($bulk.Status)"
+  Assert-True "Tepat satu permohonan disetujui" (@($bulk.Json.data.approved).Count -eq 1) "approved=$(@($bulk.Json.data.approved).Count)"
+  Assert-True "Permohonan lain gagal dengan alasan" (@($bulk.Json.data.failed).Count -eq 1 -and $bulk.Json.data.failed[0].reason.Length -gt 0) "failed=$(@($bulk.Json.data.failed).Count)"
+
+  $bulkStock = Invoke-Api -Method GET -Path "/books/$bulkBookId" -Token $adminToken
+  Assert-True "Stok tidak negatif setelah persetujuan massal" ($bulkStock.Json.data.availableCopies -eq 0) "avail=$($bulkStock.Json.data.availableCopies)"
+
+  $bulkEmpty = Invoke-Api -Method POST -Path "/loans/bulk-approve" -Body @{ loanIds = @() } -Token $adminToken
+  Assert-True "Daftar kosong ditolak validasi (422)" ($bulkEmpty.Status -eq 422) "got $($bulkEmpty.Status)"
+  $bulkUser = Invoke-Api -Method POST -Path "/loans/bulk-approve" -Body @{ loanIds = @($r1.Json.data.id) } -Token $userToken
+  Assert-True "Siswa tidak boleh menyetujui massal (403)" ($bulkUser.Status -eq 403) "got $($bulkUser.Status)"
+
+  foreach ($lid in @($r1.Json.data.id, $r2.Json.data.id)) {
+    Invoke-Api -Method POST -Path "/loans/$lid/cancel" -Token $adminToken | Out-Null
+  }
+  Invoke-Api -Method DELETE -Path "/books/$bulkBookId" -Token $adminToken | Out-Null
+} else {
+  Write-Host "  [SKIP] Buku bulk approve gagal dibuat: $($bulkBook.Json.message)" -ForegroundColor Yellow
+}
+
+# ---------------------------------------------------------------- FINES / NOTIFICATIONS / SETTINGS
+Write-Host "`n[21] Denda, Notifikasi & Pengaturan Baru" -ForegroundColor Yellow
+$fineAdmin = Invoke-Api -Method GET -Path "/fines?pageSize=10" -Token $adminToken
+Assert-True "Admin dapat membaca buku denda" ($fineAdmin.Status -eq 200) "got $($fineAdmin.Status)"
+Assert-True "Denda menyertakan ringkasan" ($null -ne $fineAdmin.Json.summary) "summary=null"
+
+$fineMine = Invoke-Api -Method GET -Path "/fines/mine?pageSize=10" -Token $userToken
+Assert-True "Siswa dapat membaca denda miliknya" ($fineMine.Status -eq 200) "got $($fineMine.Status)"
+$fineUserAll = Invoke-Api -Method GET -Path "/fines" -Token $userToken
+Assert-True "Siswa tidak boleh membaca seluruh buku denda (403)" ($fineUserAll.Status -eq 403) "got $($fineUserAll.Status)"
+
+# The end date must be inclusive: a wide range has to match the unfiltered total.
+$fineWide = Invoke-Api -Method GET -Path "/fines?from=2020-01-01&to=2030-12-31&pageSize=1" -Token $adminToken
+$fineNone = Invoke-Api -Method GET -Path "/fines?pageSize=1" -Token $adminToken
+Assert-True "Filter tanggal denda inklusif di kedua ujung" ($fineWide.Json.meta.total -eq $fineNone.Json.meta.total) "wide=$($fineWide.Json.meta.total) all=$($fineNone.Json.meta.total)"
+
+$notif = Invoke-Api -Method GET -Path "/notifications?pageSize=10" -Token $userToken
+Assert-True "Notifikasi siswa dapat dibaca" ($notif.Status -eq 200) "got $($notif.Status)"
+$unread = Invoke-Api -Method GET -Path "/notifications/unread-count" -Token $userToken
+Assert-True "Jumlah notifikasi belum dibaca tersedia" ($null -ne $unread.Json.data.unread) "unread=null"
+$readAll = Invoke-Api -Method POST -Path "/notifications/read-all" -Token $userToken
+Assert-True "Tandai semua notifikasi terbaca berhasil" ($readAll.Status -eq 200) "got $($readAll.Status)"
+
+# New settings round-trip through PUT and are visible in GET.
+$settingsBefore = Invoke-Api -Method GET -Path "/settings" -Token $adminToken
+$skipBefore = ($settingsBefore.Json.data | Where-Object { $_.key -eq "due_date_skip_holidays" }).value
+$setOff = Invoke-Api -Method PUT -Path "/settings" -Body @{ due_date_skip_holidays = 0; max_reservations_per_user = 5 } -Token $adminToken
+Assert-True "Pengaturan operasional baru dapat diubah" ($setOff.Status -eq 200) "got $($setOff.Status)"
+$settingsAfter = Invoke-Api -Method GET -Path "/settings" -Token $adminToken
+Assert-True "Geser jatuh tempo tersimpan sebagai 0" (($settingsAfter.Json.data | Where-Object { $_.key -eq "due_date_skip_holidays" }).value -eq "0") "value=$(($settingsAfter.Json.data | Where-Object { $_.key -eq "due_date_skip_holidays" }).value)"
+Assert-True "Batas antrean baru tersimpan" (($settingsAfter.Json.data | Where-Object { $_.key -eq "max_reservations_per_user" }).value -eq "5") "value=$(($settingsAfter.Json.data | Where-Object { $_.key -eq "max_reservations_per_user" }).value)"
+Assert-True "Seluruh 15 pengaturan tersedia" (@($settingsAfter.Json.data).Count -eq 15) "jumlah=$(@($settingsAfter.Json.data).Count)"
+$setRestore = Invoke-Api -Method PUT -Path "/settings" -Body @{ due_date_skip_holidays = $skipBefore; max_reservations_per_user = 3 } -Token $adminToken
+Assert-True "Pengaturan dapat dikembalikan ke nilai awal" ($setRestore.Status -eq 200) "got $($setRestore.Status)"
+
+# ---------------------------------------------------------------- EXCEL / BACKUP
+Write-Host "`n[22] Excel & Cadangan" -ForegroundColor Yellow
+$template = Invoke-ApiDownload -Path "/excel/template/members" -Token $adminToken -FileName "template-anggota.xlsx"
+Assert-True "Template impor anggota dapat diunduh" ($template.Status -eq 200 -and $template.Size -gt 2000) "size=$($template.Size)"
+
+$memberExport = Invoke-ApiDownload -Path "/excel/export/members" -Token $adminToken -FileName "anggota.xlsx"
+Assert-True "Ekspor anggota menghasilkan berkas xlsx" ($memberExport.Status -eq 200 -and $memberExport.Size -gt 2000) "size=$($memberExport.Size)"
+
+$fineExport = Invoke-ApiDownload -Path "/excel/export/fines?status=all" -Token $adminToken -FileName "denda.xlsx"
+Assert-True "Ekspor denda menghasilkan berkas xlsx" ($fineExport.Status -eq 200 -and $fineExport.Size -gt 1000) "size=$($fineExport.Size)"
+
+$userExport = Invoke-ApiDownload -Path "/excel/export/members" -Token $userToken -FileName "anggota-siswa.xlsx"
+Assert-True "Siswa tidak boleh mengekspor data anggota" ($userExport.Status -eq 403) "got $($userExport.Status)"
+
+if ($template.Path) {
+  $validate = Invoke-ApiUpload -Path "/excel/import/members?mode=validate" -FilePath $template.Path -Token $adminToken
+  Assert-True "Validasi impor tidak menyimpan data" ($validate.Status -eq 200 -and $validate.Json.data.dryRun -eq $true) "got $($validate.Status)"
+  Assert-True "Template contoh terbaca sebagai 1 baris valid" ($validate.Json.data.validRows -eq 1) "valid=$($validate.Json.data.validRows)"
+
+  $commit = Invoke-ApiUpload -Path "/excel/import/members?mode=commit" -FilePath $template.Path -Token $adminToken
+  Assert-True "Impor anggota berhasil disimpan" ($commit.Status -eq 200 -and $commit.Json.data.inserted -eq 1) "got $($commit.Status) inserted=$($commit.Json.data.inserted)"
+  Assert-True "Impor mengembalikan kode anggota" (@($commit.Json.data.memberCodes).Count -eq 1) "codes=$($commit.Json.data.memberCodes -join ',')"
+  $batchPassword = $commit.Json.data.batchPassword
+  Assert-True "Impor mengembalikan satu kata sandi batch" ($batchPassword.Length -ge 8) "len=$($batchPassword.Length)"
+
+  $importedLogin = Invoke-Api -Method POST -Path "/auth/login" -Body @{ identifier = "andira.putri"; password = $batchPassword }
+  Assert-True "Akun hasil impor dapat masuk dengan kata sandi batch" ($importedLogin.Status -eq 200) "got $($importedLogin.Status)"
+  Assert-True "Akun hasil impor wajib mengganti kata sandi" ($importedLogin.Json.data.user.mustChangePassword -eq $true) "flag=$($importedLogin.Json.data.user.mustChangePassword)"
+  $importedToken = $importedLogin.Json.data.token
+
+  $forceChange = Invoke-Api -Method POST -Path "/auth/change-password" -Body @{
+    currentPassword = $batchPassword
+    newPassword = "SiswaBaru123!"
+    confirmPassword = "SiswaBaru123!"
+  } -Token $importedToken
+  Assert-True "Akun impor dapat mengganti kata sandinya" ($forceChange.Status -eq 200) "got $($forceChange.Status)"
+  $meAfter = Invoke-Api -Method GET -Path "/auth/me" -Token $importedToken
+  Assert-True "Penanda wajib ganti sandi hilang setelah diganti" ($meAfter.Json.data.mustChangePassword -eq $false) "flag=$($meAfter.Json.data.mustChangePassword)"
+
+  $importedMember = Invoke-Api -Method GET -Path "/members?search=andira.putri" -Token $adminToken
+  $importedId = $importedMember.Json.data[0].id
+  $delImported = Invoke-Api -Method DELETE -Path "/members/$importedId" -Token $adminToken
+  Assert-True "Anggota hasil impor dapat dihapus kembali" ($delImported.Status -eq 200) "got $($delImported.Status)"
+}
+
+$backup = Invoke-ApiDownload -Path "/backup/database" -Token $adminToken -FileName "backup.sql"
+Assert-True "Cadangan database dapat diunduh" ($backup.Status -eq 200 -and $backup.Size -gt 5000) "size=$($backup.Size)"
+$userBackup = Invoke-ApiDownload -Path "/backup/database" -Token $userToken -FileName "backup-siswa.sql"
+Assert-True "Siswa tidak boleh mengunduh cadangan (403)" ($userBackup.Status -eq 403) "got $($userBackup.Status)"
+
+if ($template.Path) {
+  $noConfirm = Invoke-ApiUpload -Path "/backup/restore" -FilePath $template.Path -Token $adminToken -Fields @{ confirmation = "salah" }
+  Assert-True "Restore tanpa konfirmasi PULIHKAN ditolak (400)" ($noConfirm.Status -eq 400) "got $($noConfirm.Status)"
+
+  $badDump = Invoke-ApiUpload -Path "/backup/restore" -FilePath $template.Path -Token $adminToken -Fields @{ confirmation = "PULIHKAN" }
+  Assert-True "Restore menolak berkas yang bukan cadangan LUMEN (400)" ($badDump.Status -eq 400) "got $($badDump.Status) $($badDump.Json.message)"
+
+  $userRestore = Invoke-ApiUpload -Path "/backup/restore" -FilePath $template.Path -Token $userToken -Fields @{ confirmation = "PULIHKAN" }
+  Assert-True "Siswa tidak boleh memulihkan database (403)" ($userRestore.Status -eq 403) "got $($userRestore.Status)"
+}
 
 # ---------------------------------------------------------------- SUMMARY
 Write-Host "`n=== HASIL ===" -ForegroundColor Cyan

@@ -15,6 +15,7 @@ export interface BookRow extends RowDataPacket {
   shelf_location: string | null;
   total_copies: number;
   available_copies: number;
+  damaged_copies: number;
   cover_path: string | null;
   status: BookStatus;
   created_at: string;
@@ -37,6 +38,8 @@ export interface Book {
   totalCopies: number;
   availableCopies: number;
   borrowedCopies: number;
+  /** Copies on the shelf but unusable. Part of `totalCopies`, never borrowable. */
+  damagedCopies: number;
   coverPath: string | null;
   status: BookStatus;
   createdAt: string;
@@ -57,7 +60,11 @@ export function toBook(row: BookRow): Book {
     shelfLocation: row.shelf_location,
     totalCopies: row.total_copies,
     availableCopies: row.available_copies,
-    borrowedCopies: Math.max(0, row.total_copies - row.available_copies),
+    // `borrowed` is what is physically out on loan. Damaged copies sit on the
+    // shelf but are not available, so subtracting only `available` would count
+    // them as borrowed and inflate the circulation figure.
+    borrowedCopies: Math.max(0, row.total_copies - row.available_copies - row.damaged_copies),
+    damagedCopies: row.damaged_copies,
     coverPath: row.cover_path,
     status: row.status,
     createdAt: row.created_at,

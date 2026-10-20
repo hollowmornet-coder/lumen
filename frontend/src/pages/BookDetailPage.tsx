@@ -6,20 +6,30 @@ import {
   BookOpen,
   Building2,
   CalendarDays,
+  Clock,
   Hash,
+  Heart,
   Library,
   MapPin,
   ShieldCheck,
 } from 'lucide-react';
 import { PageBody, PageHeader } from '@/components/layout/PageHeader';
 import { BookCover } from '@/components/ui/book-cover';
+import { BookReviews } from '@/components/books/BookReviews';
 import { Badge, StockBadge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/input';
 import { CardSkeleton } from '@/components/ui/skeleton';
 import { Dialog, DialogContent } from '@/components/ui/dialog';
 import { ErrorState } from '@/components/ui/states';
-import { useBook, useMyLoans, useMemberOverview, useApiMutation } from '@/hooks/useApi';
+import {
+  useBook,
+  useMyLoans,
+  useMyReservations,
+  useMemberOverview,
+  useApiMutation,
+  useWishlistMarks,
+} from '@/hooks/useApi';
 import { useAuth } from '@/features/auth/AuthContext';
 import { api } from '@/lib/api';
 import { formatDate, formatNumber } from '@/lib/utils';
@@ -34,6 +44,19 @@ export default function BookDetailPage() {
   const { data: book, isLoading, isError, error, refetch } = useBook(Number.isFinite(bookId) ? bookId : null);
   const overview = useMemberOverview();
   const myLoans = useMyLoans({ pageSize: 50, sort: 'requested_at', direction: 'DESC' });
+  const myReservations = useMyReservations();
+  const wishlistMarks = useWishlistMarks(book ? [book.id] : []);
+  const wished = (wishlistMarks.data ?? []).includes(book?.id ?? 0);
+
+  const toggleWishlist = useApiMutation<{ bookId: number; add: boolean }, unknown>({
+    mutationFn: async ({ bookId, add }) =>
+      add
+        ? (await api.post(`/wishlist`, { bookId })).data
+        : (await api.delete(`/wishlist/${bookId}`)).data,
+    successMessage: (_data, vars) =>
+      vars.add ? 'Ditambahkan ke daftar keinginan.' : 'Dihapus dari daftar keinginan.',
+    invalidate: [['wishlist']],
+  });
 
   const [requestOpen, setRequestOpen] = React.useState(false);
   const [note, setNote] = React.useState('');
@@ -50,7 +73,23 @@ export default function BookDetailPage() {
       return res.data;
     },
     successMessage: () => 'Permohonan peminjaman terkirim.',
-    invalidate: [['/books'], ['/loans']],
+    invalidate: [['books'], ['loans'], ['my-loans'], ['dashboard']],
+    onSuccess: () => {
+      setRequestOpen(false);
+      setNote('');
+    },
+  });
+
+  const reserve = useApiMutation({
+    mutationFn: async () => {
+      const res = await api.post<{ id: number }>('/reservations', {
+        bookId: currentBookId,
+        note: note || undefined,
+      });
+      return res.data;
+    },
+    successMessage: () => 'Anda masuk antrean. Kami kabari begitu buku tersedia.',
+    invalidate: [['my-reservations'], ['reservations'], ['books'], ['dashboard']],
     onSuccess: () => {
       setRequestOpen(false);
       setNote('');
@@ -83,12 +122,23 @@ export default function BookDetailPage() {
     (l) => l.bookId === book.id && ['pending', 'approved', 'borrowed', 'return_requested'].includes(l.status),
   );
 
+  const existingReservation = (myReservations.data ?? []).find(
+    (r) => r.bookId === book.id && (r.status === 'waiting' || r.status === 'ready'),
+  );
+
   const quotaReached = (overview.data?.remainingQuota ?? 1) <= 0;
   const outOfStock = book.availableCopies === 0;
   const inactive = book.status !== 'active';
 
   // A single source of truth for the button state, so the UI never lies.
-  let action: { label: string; disabled: boolean; hint: string; onClick?: () => void; tone?: 'primary' | 'outline' };
+  let action: {
+    label: string;
+    disabled: boolean;
+    hint: string;
+    onClick?: () => void;
+    tone?: 'primary' | 'outline';
+    mode?: 'loan' | 'reserve';
+  };
 
   if (inactive) {
     action = { label: 'Buku Nonaktif', disabled: true, hint: 'Buku ini sedang dinonaktifkan.', tone: 'outline' };
@@ -99,8 +149,24 @@ export default function BookDetailPage() {
       hint: `Status saat ini: ${existing.status.replace('_', ' ')}.`,
       tone: 'outline',
     };
+  } else if (existingReservation) {
+    action = {
+      label: existingReservation.status === 'ready' ? 'Siap Diambil' : 'Sudah Mengantre',
+      disabled: true,
+      hint:
+        existingReservation.status === 'ready'
+          ? `Buku disisihkan untuk Anda. Ambil sebelum ${formatDate(existingReservation.expiresAt)}.`
+          : `Anda berada di posisi ${existingReservation.queuePosition ?? 1} dalam antrean.`,
+      tone: 'outline',
+    };
   } else if (outOfStock) {
-    action = { label: 'Stok Habis', disabled: true, hint: 'Semua eksemplar sedang dipinjam.', tone: 'outline' };
+    action = {
+      label: 'Masuk Antrean',
+      disabled: false,
+      hint: 'Semua eksemplar sedang dipinjam. Pesan tempat dan kami kabari saat tersedia.',
+      onClick: () => setRequestOpen(true),
+      mode: 'reserve',
+    };
   } else if (quotaReached) {
     action = {
       label: 'Kuota Peminjaman Penuh',
@@ -114,8 +180,12 @@ export default function BookDetailPage() {
       disabled: false,
       hint: `${book.availableCopies} eksemplar tersedia`,
       onClick: () => setRequestOpen(true),
+      mode: 'loan',
     };
   }
+
+  const isReserveMode = action.mode === 'reserve';
+  const pending = isReserveMode ? reserve.isPending : requestLoan.isPending;
 
   return (
     <>
@@ -182,7 +252,18 @@ export default function BookDetailPage() {
               <Button asChild variant="outline" className="w-full">
                 <Link to="/admin/buku">Kelola buku ini</Link>
               </Button>
-            ) : null}
+            ) : (
+              <Button
+                variant={wished ? 'secondary' : 'outline'}
+                className="w-full"
+                onClick={() => toggleWishlist.mutate({ bookId: book.id, add: !wished })}
+                loading={toggleWishlist.isPending}
+                aria-pressed={wished}
+              >
+                <Heart className={wished ? 'size-4 fill-current' : 'size-4'} aria-hidden />
+                {wished ? 'Ada di daftar keinginan' : 'Simpan ke daftar keinginan'}
+              </Button>
+            )}
           </motion.div>
 
           {/* ---------- Details + action ---------- */}
@@ -208,7 +289,14 @@ export default function BookDetailPage() {
                     {overview.data ? (
                       <p className="mt-0.5 text-xs text-muted-foreground">
                         Kuota Anda: {overview.data.activeLoans}/{overview.data.maxLoanPerUser} buku
-                        · Masa pinjam {overview.data.requireApproval ? 'menunggu persetujuan' : 'langsung aktif'}
+                        {overview.data.unpaidFines > 0 ? (
+                          <span className="text-destructive">
+                            {' '}· denda belum lunas Rp
+                            {formatNumber(overview.data.unpaidFines)}
+                          </span>
+                        ) : (
+                          <> · Masa pinjam {overview.data.requireApproval ? 'menunggu persetujuan' : 'langsung aktif'}</>
+                        )}
                       </p>
                     ) : null}
                   </div>
@@ -250,6 +338,14 @@ export default function BookDetailPage() {
               <MiniStat label="Dipinjam" value={book.borrowedCopies} tone="violet" />
             </div>
 
+            {book.damagedCopies > 0 ? (
+              <p className="flex items-start gap-2 rounded-lg border border-warning/25 bg-warning-soft px-3 py-2.5 text-xs text-warning">
+                <MapPin className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+                {formatNumber(book.damagedCopies)} eksemplar sedang dalam perbaikan dan belum dapat
+                dipinjam.
+              </p>
+            ) : null}
+
             {/* My loans for this title */}
             {myLoans.data && myLoans.data.items.filter((l) => l.bookId === book.id).length > 0 ? (
               <div className="panel p-5">
@@ -272,22 +368,28 @@ export default function BookDetailPage() {
                 </ul>
               </div>
             ) : null}
+
+            {/* Reviews */}
+            <BookReviews bookId={book.id} />
           </motion.div>
         </motion.div>
       </PageBody>
 
-      {/* ---------- Request dialog ---------- */}
+      {/* ---------- Request / reserve dialog ---------- */}
       <Dialog open={requestOpen} onOpenChange={setRequestOpen}>
         <DialogContent
-          title="Ajukan peminjaman"
+          title={isReserveMode ? 'Masuk antrean' : 'Ajukan peminjaman'}
           description={`"${book.title}" oleh ${book.author}`}
           footer={
             <>
-              <Button variant="outline" onClick={() => setRequestOpen(false)} disabled={requestLoan.isPending}>
+              <Button variant="outline" onClick={() => setRequestOpen(false)} disabled={pending}>
                 Batal
               </Button>
-              <Button onClick={() => requestLoan.mutate()} loading={requestLoan.isPending}>
-                Kirim permohonan
+              <Button
+                onClick={() => (isReserveMode ? reserve.mutate() : requestLoan.mutate())}
+                loading={pending}
+              >
+                {isReserveMode ? 'Kirim permintaan antrean' : 'Kirim permohonan'}
               </Button>
             </>
           }
@@ -304,7 +406,9 @@ export default function BookDetailPage() {
                 <p className="text-sm font-medium">{book.title}</p>
                 <p className="truncate text-xs text-muted-foreground">{book.author}</p>
                 <p className="mt-1.5 text-2xs text-muted-foreground">
-                  {book.availableCopies} eksemplar tersedia
+                  {isReserveMode
+                    ? 'Stok sedang habis · antrean diproses berurutan'
+                    : `${book.availableCopies} eksemplar tersedia`}
                 </p>
               </div>
             </div>
@@ -318,13 +422,19 @@ export default function BookDetailPage() {
                 value={note}
                 onChange={(e) => setNote(e.target.value)}
                 maxLength={255}
-                placeholder="Contoh: untuk tugas kelompok."
+                placeholder={isReserveMode ? 'Contoh: dibutuhkan untuk tugas bulan depan.' : 'Contoh: untuk tugas kelompok.'}
                 rows={3}
               />
               <p className="text-2xs text-muted-foreground">{note.length}/255</p>
             </div>
 
-            {overview.data ? (
+            {isReserveMode ? (
+              <p className="flex items-start gap-2 rounded-lg bg-violet-soft px-3 py-2.5 text-xs text-secondary">
+                <Clock className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+                Ketika satu eksemplar kembali, orang pertama dalam antrean mendapat notifikasi dan
+                waktu {formatNumber(2)} hari untuk mengambilnya sebelum kesempatan berpindah.
+              </p>
+            ) : overview.data ? (
               <p className="flex items-start gap-2 rounded-lg bg-electric-soft px-3 py-2.5 text-xs text-primary">
                 <ShieldCheck className="mt-0.5 size-3.5 shrink-0" aria-hidden />
                 {overview.data.requireApproval

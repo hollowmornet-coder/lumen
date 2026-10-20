@@ -11,7 +11,13 @@ export type LoanStatus =
   | 'returned'
   | 'cancelled';
 
-export type DisplayStatus = LoanStatus | 'overdue';
+/**
+ * `overdue` and `pickup_expired` are DERIVED by the server, never stored:
+ * a loan is late when `due_at` has passed, and a hold is dead when
+ * `pickup_deadline` has passed. Keeping them out of the column means the
+ * answer is always computed against the current clock.
+ */
+export type DisplayStatus = LoanStatus | 'overdue' | 'pickup_expired';
 
 export interface User {
   id: number;
@@ -24,6 +30,11 @@ export interface User {
   memberCode: string | null;
   status: UserStatus;
   lastLoginAt: string | null;
+  /**
+   * True for accounts created by the bulk Excel importer, which all share one
+   * batch password. The app shows a blocking "change your password" gate.
+   */
+  mustChangePassword: boolean;
 }
 
 export interface Book {
@@ -40,6 +51,8 @@ export interface Book {
   totalCopies: number;
   availableCopies: number;
   borrowedCopies: number;
+  /** Copies physically present but unusable. Part of total, never available. */
+  damagedCopies: number;
   coverPath: string | null;
   status: BookStatus;
   createdAt: string;
@@ -60,16 +73,55 @@ export interface Member extends User {
   totalLoans: number;
 }
 
+/**
+ * Result of scanning a card or barcode at the circulation desk.
+ *
+ * The server decides what the code meant; the UI only reacts. That keeps one
+ * interpretation of "MBR-…" vs "978-…" instead of duplicating the rule here.
+ */
+export type ScanTarget =
+  | {
+      kind: 'member';
+      id: number;
+      memberCode: string | null;
+      username: string;
+      fullName: string;
+      className: string | null;
+      status: string;
+    }
+  | {
+      kind: 'book';
+      id: number;
+      isbn: string;
+      title: string;
+      author: string;
+      availableCopies: number;
+      totalCopies: number;
+    }
+  | {
+      kind: 'loan';
+      id: number;
+      loanCode: string;
+      status: string;
+      memberName: string;
+      bookTitle: string;
+      dueAt: string | null;
+    };
+
 export interface Loan {
   id: number;
   loanCode: string;
   userId: number;
   bookId: number;
   quantity: number;
+  /** How many times this loan has been extended. */
+  renewCount: number;
   status: LoanStatus;
   displayStatus: DisplayStatus;
   requestedAt: string;
   approvedAt: string | null;
+  /** Last moment the member may collect the book; only for `approved`. */
+  pickupDeadline: string | null;
   borrowedAt: string | null;
   dueAt: string | null;
   returnRequestedAt: string | null;
@@ -80,6 +132,8 @@ export interface Loan {
   adminNote: string | null;
   daysLate: number | null;
   lateFee: number | null;
+  /** Money this member still owes across ALL loans, fines included. */
+  unpaidFines: number;
   book: {
     id: number;
     title: string;
@@ -98,11 +152,103 @@ export interface Loan {
   };
 }
 
+export type FineKind = 'late' | 'damaged' | 'lost';
+export type FineStatus = 'unpaid' | 'paid' | 'waived';
+
+export interface Fine {
+  id: number;
+  loanId: number;
+  loanCode: string;
+  userId: number;
+  kind: FineKind;
+  amount: number;
+  status: FineStatus;
+  settledAt: string | null;
+  note: string | null;
+  createdAt: string;
+  book: { id: number; title: string };
+  member: { id: number; fullName: string; memberCode: string | null };
+}
+
+export interface FineSummary {
+  unpaidCount: number;
+  unpaidTotal: number;
+  paidTotal: number;
+  waivedTotal: number;
+}
+
+export type ReservationStatus = 'waiting' | 'ready' | 'fulfilled' | 'expired' | 'cancelled';
+
+export interface Reservation {
+  id: number;
+  bookId: number;
+  userId: number;
+  status: ReservationStatus;
+  /** 1-based place in the queue while `waiting`; null otherwise. */
+  queuePosition: number | null;
+  readyAt: string | null;
+  expiresAt: string | null;
+  note: string | null;
+  createdAt: string;
+  book: {
+    id: number;
+    title: string;
+    author: string;
+    coverPath: string | null;
+    availableCopies: number;
+  };
+  member: { id: number; fullName: string; memberCode: string | null };
+}
+
+export interface Notification {
+  id: number;
+  type: string;
+  title: string;
+  body: string | null;
+  link: string | null;
+  readAt: string | null;
+  createdAt: string;
+}
+
+export interface NeverBorrowedBook {
+  id: number;
+  title: string;
+  author: string;
+  categoryName: string | null;
+  totalCopies: number;
+  availableCopies: number;
+  createdAt: string;
+}
+
+export interface LateMember {
+  id: number;
+  fullName: string;
+  memberCode: string | null;
+  overdueCount: number;
+  totalLateDays: number;
+  unpaidFines: number;
+}
+
+export interface FineReport {
+  byKind: Array<{ kind: string; count: number; total: number; unpaid: number }>;
+  byMonth: Array<{ period: string; charged: number; collected: number }>;
+  totals: { charged: number; collected: number; outstanding: number; waived: number };
+}
+
+export interface AdminReports {
+  range: { from: string; to: string };
+  neverBorrowed: NeverBorrowedBook[];
+  lateMembers: LateMember[];
+  fines: FineReport;
+}
+
 export interface AdminOverview {
   totalTitles: number;
   totalCopies: number;
   availableCopies: number;
   borrowedCopies: number;
+  /** Copies flagged as damaged; counted in `totalCopies`, never available. */
+  damagedCopies: number;
   activeMembers: number;
   totalMembers: number;
   pendingApprovals: number;
@@ -112,6 +258,11 @@ export interface AdminOverview {
   totalLoans: number;
   returnedThisMonth: number;
   categories: number;
+  /** Approved holds whose pickup window has passed. */
+  pickupExpired: number;
+  unpaidFinesTotal: number;
+  unpaidFinesCount: number;
+  queueWaiting: number;
 }
 
 export interface MemberOverview {
@@ -124,6 +275,12 @@ export interface MemberOverview {
   remainingQuota: number;
   allowSelfReturn: boolean;
   requireApproval: boolean;
+  unpaidFines: number;
+  unpaidFineCount: number;
+  waitingReservations: number;
+  readyReservations: number;
+  /** Cap on extensions per loan; 0 means renewal is disabled. */
+  maxRenewals: number;
 }
 
 export interface TrendPoint {
@@ -193,6 +350,12 @@ export interface LibraryRules {
   requireApproval: boolean;
   allowSelfReturn: boolean;
   lateFeePerDay: number;
+  maxRenewals: number;
+  pickupWindowDays: number;
+  fineBlockBorrow: boolean;
+  damagedFee: number;
+  lostFee: number;
+  reservationHoldDays: number;
 }
 
 export interface ImportRowError {
@@ -301,4 +464,132 @@ export interface AuthorDetail {
 export interface SeriesDetail {
   series: SeriesSummary;
   items: SeriesBookItem[];
+}
+
+// =====================================================================
+//  Operasional lanjutan (migrasi 006)
+// =====================================================================
+
+export interface Holiday {
+  id: number;
+  date: string;
+  name: string;
+}
+
+export type VisitPurpose = 'read' | 'borrow' | 'return' | 'study' | 'other';
+
+export interface Visit {
+  id: number;
+  userId: number | null;
+  memberName: string;
+  memberCode: string | null;
+  className: string | null;
+  guestName: string | null;
+  purpose: VisitPurpose;
+  visitDate: string;
+  createdAt: string;
+}
+
+export interface VisitSummary {
+  today: number;
+  thisMonth: number;
+  uniqueToday: number;
+  byPurpose: Array<{ purpose: string; total: number }>;
+}
+
+export interface Opname {
+  id: number;
+  bookId: number;
+  bookTitle: string;
+  isbn: string;
+  expected: number;
+  counted: number;
+  difference: number;
+  note: string | null;
+  appliedAt: string | null;
+  appliedBy: number | null;
+  appliedByName: string | null;
+  createdBy: number;
+  createdByName: string;
+  createdAt: string;
+}
+
+export interface Review {
+  id: number;
+  bookId: number;
+  bookTitle?: string;
+  userId: number;
+  memberName: string;
+  memberCode: string | null;
+  className: string | null;
+  rating: number;
+  comment: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ReviewStats {
+  average: number;
+  total: number;
+  distribution: Record<string, number>;
+}
+
+export type AnnouncementAudience = 'all' | 'user' | 'admin';
+
+export interface Announcement {
+  id: number;
+  title: string;
+  body: string;
+  audience: AnnouncementAudience;
+  pinned: boolean;
+  expiresAt: string | null;
+  /** Derived in SQL from NOW(), like `overdue`. */
+  expired: boolean;
+  createdBy: number;
+  createdByName: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface WishlistItem {
+  id: number;
+  bookId: number;
+  title: string;
+  author: string;
+  coverPath: string | null;
+  categoryName: string | null;
+  availableCopies: number;
+  totalCopies: number;
+  createdAt: string;
+}
+
+export interface WishlistDemand {
+  bookId: number;
+  title: string;
+  author: string;
+  wishCount: number;
+  availableCopies: number;
+  totalCopies: number;
+}
+
+export interface BulkApproveResult {
+  approved: Loan[];
+  failed: Array<{ id: number; reason: string }>;
+}
+
+export interface RestoreReport {
+  bytes: number;
+  tables: string[];
+  durationMs: number;
+}
+
+export interface MemberImportSummary {
+  inserted: number;
+  memberCodes: string[];
+  batchPassword: string;
+  totalRows: number;
+  validRows: number;
+  errorRows: number;
+  duplicateRows: number;
+  errors: ImportRowError[];
 }

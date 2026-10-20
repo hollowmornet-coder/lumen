@@ -68,6 +68,32 @@ export const excelUpload = multer({
   },
 });
 
+/**
+ * SQL backup upload.
+ *
+ * Browsers send `.sql` as `application/octet-stream`, `application/sql` or even
+ * `text/plain` depending on the OS, so the extension is the only reliable hint
+ * at this stage. The real validation is `inspectDump`, which reads the content.
+ */
+export const sqlUpload = multer({
+  storage: multer.memoryStorage(),
+  // A full dump with cover rows can be large, but 64 MB is far beyond any
+  // realistic school library and still bounds memory use.
+  limits: { fileSize: 64 * 1024 * 1024, files: 1 },
+  fileFilter: (_req, file, cb) => {
+    const ok =
+      /\.sql$/i.test(file.originalname) ||
+      file.mimetype === 'application/sql' ||
+      file.mimetype === 'application/octet-stream' ||
+      file.mimetype === 'text/plain';
+    if (!ok) {
+      cb(badRequest('Berkas cadangan harus berformat .sql.'));
+      return;
+    }
+    cb(null, true);
+  },
+});
+
 export interface StoredFile {
   relativePath: string;
   absolutePath: string;

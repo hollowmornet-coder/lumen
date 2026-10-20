@@ -30,16 +30,52 @@ admin perpustakaan dalam peminjaman dan pendataan buku.
 - Kelola anggota (CRUD, reset kata sandi, kode anggota otomatis, cegah hapus bila ada
   transaksi aktif).
 - Transaksi: setujui / tolak permohonan, serah-terima buku, terima pengembalian.
+- **Meja sirkulasi**: peminjaman langsung di loket (anggota → buku → konfirmasi) tanpa
+  menunggu permohonan siswa, dengan pratinjau jatuh tempo dan pemeriksaan kuota.
+- **Perpanjangan pinjaman** dengan batas jumlah per transaksi.
+- **Batas waktu pengambilan**: peminjaman yang disetujui tetapi tidak diambil dalam
+  N hari otomatis ditandai `pickup_expired` dan jatahnya dapat dilepas ke antrean.
+- **Denda sebagai data**: keterlambatan, kerusakan, dan kehilangan dicatat sebagai baris
+  `fines` yang di-snapshot, lalu dilunasi atau dibebaskan di meja petugas.
+- **Antrean/reservasi** saat stok habis, dengan promosi otomatis ke status `ready`
+  begitu buku dikembalikan.
+- **Pemindai barcode/QR** di meja sirkulasi: satu kolom menerima kartu anggota,
+  ISBN buku, atau kode transaksi sekaligus.
+- **Kartu anggota ber-QR** yang dapat ditampilkan dan dicetak dari halaman anggota.
 - Pantau peminjaman terlambat dan pengembalian yang menunggu verifikasi.
 - Ekspor & impor data Excel (.xlsx) termasuk template impor.
 - Riwayat aktivitas (audit trail).
-- Pengaturan aturan operasional (kuota pinjam, masa pinjam, persetujuan, denda).
+- Laporan tambahan: buku yang tidak pernah dipinjam, anggota paling sering terlambat,
+  dan rekap denda per jenis.
+- **Cadangan basis data** sekali klik (unduh dump `.sql` lengkap) dan **pemulihan**
+  dari berkas cadangan dengan konfirmasi ketik `PULIHKAN`.
+- **Impor anggota dari Excel** dalam dua langkah (periksa dulu, baru simpan), dengan
+  satu kata sandi batch dan kewajiban ganti sandi saat login pertama.
+- **Hari libur**: kalender tanggal merah yang menggeser jatuh tempo otomatis.
+- **Kunjungan perpustakaan**: catat kehadiran anggota (pindai kartu) maupun tamu.
+- **Stok opname**: bandingkan stok sistem dengan hitung fisik, lalu terapkan selisihnya.
+- **Pengumuman**: terbitkan informasi untuk semua, hanya siswa, atau hanya petugas.
+- **Laporan permintaan**: judul yang paling banyak masuk daftar keinginan anggota.
+- Pengaturan 15 aturan operasional (kuota, masa pinjam, persetujuan, denda harian,
+  perpanjangan, batas ambil, blokir denda, biaya rusak/hilang, masa sisih antrean,
+  penggeseran jatuh tempo saat libur, batas antrean, syarat ulasan, pencatatan kunjungan).
 
 ### User / Siswa
 - Daftar dan login (registrasi publik **hanya** menghasilkan role siswa).
+- **Lupa kata sandi** mandiri dengan token sekali pakai (berlaku 30 menit).
 - Katalog editorial dengan pencarian, filter kategori/ketersediaan, sorting, pagination.
 - Detail buku dengan status stok dan tombol pinjam yang mengikuti aturan bisnis.
 - Ajukan peminjaman, pantau status, ajukan pengembalian.
+- **Perpanjang pinjaman** sendiri selama belum terlambat dan batas belum tercapai.
+- **Antre buku** saat stok habis, lihat posisi antrean, dan batalkan bila berubah pikiran.
+- **Denda saya**: daftar tagihan belum lunas dan riwayat pelunasan (baca saja —
+  pembayaran hanya di meja petugas).
+- **Notifikasi dalam aplikasi**: persetujuan, jatuh tempo, denda baru, dan buku
+  pesanan siap diambil, lengkap dengan penanda belum dibaca.
+- **Kartu anggota ber-QR** di halaman profil untuk ditunjukkan di meja sirkulasi.
+- **Ulasan & rating bintang** pada buku yang pernah dipinjam.
+- **Daftar keinginan** sebagai penanda baca pribadi (tidak memesan stok).
+- **Pengumuman** dari petugas tampil di beranda.
 - Riwayat peminjaman dan profil.
 
 ---
@@ -49,16 +85,19 @@ admin perpustakaan dalam peminjaman dan pendataan buku.
 **Frontend**
 | Teknologi | Versi | Peran |
 |---|---|---|
-| React | 18 | UI |
+| React | 19 | UI |
 | TypeScript | 5.x | Penulisan kode |
 | Vite | 7 | Build & dev server |
 | Tailwind CSS | 3.4 | Styling |
-| Framer Motion | 12 | Animasi |
+| Framer Motion | 14 | Animasi |
 | Lucide React | — | Ikon (SVG, tanpa emoji) |
 | React Router | 7 | Navigasi |
 | React Hook Form + Zod | — | Formulir & validasi |
-| Recharts | 2 | Grafik |
+| Recharts | 3 | Grafik |
 | TanStack Query | 5 | Pengambilan data |
+| Radix UI | — | Primitif aksesibel (dialog, select, tab, dll.) |
+| qrcode | — | QR kartu anggota & nota |
+| sonner | — | Notifikasi ringkas (toast) |
 
 **Backend**
 | Teknologi | Peran |
@@ -88,6 +127,7 @@ admin perpustakaan dalam peminjaman dan pendataan buku.
 | Browser | Chrome / Edge / Firefox versi terbaru |
 | RAM | 4 GB |
 | Koneksi internet | **Tidak diperlukan setelah instalasi** |
+| Klien MySQL (`mysqldump`, `mysql`) | Opsional — hanya untuk cadangan & pemulihan; di `_vendor/` sudah tersedia |
 
 ---
 
@@ -114,7 +154,11 @@ npm run db:init
 ```
 
 File `database.sql` sudah berisi struktur tabel, constraint, indeks, dan **seed data demo**
-(ditandai `-- [DEMO]`).
+(ditandai `-- [DEMO]`). Seluruh perubahan migrasi 001–006 sudah dilebur ke berkas ini,
+jadi pemasangan baru cukup satu impor.
+
+> **Perhatian:** `database.sql` memakai `USE lumen_db`, sehingga mengimpornya akan
+> **menimpa** basis data `lumen_db`. Jangan jalankan pada data yang ingin dipertahankan.
 
 ### 5.2 Backend
 
@@ -151,7 +195,7 @@ cd backend && npm run dev
 cd frontend && npm run dev
 ```
 
-Atau gunakan skenal pembantu di root: `start-lumen.bat` (Windows).
+Atau gunakan skrip pembantu di root: `start-lumen.bat` (Windows).
 
 ---
 
@@ -175,6 +219,17 @@ DB_USER=root
 DB_PASSWORD=
 ```
 
+Bila `mysqldump`/`mysql` tidak berada di `_vendor/` atau `PATH`:
+
+```dotenv
+MYSQLDUMP_PATH=C:\xampp\mysql\bin\mysqldump.exe
+MYSQLCLIENT_PATH=C:\xampp\mysql\bin\mysql.exe
+```
+
+> Kedua variabel hanya dipakai oleh fitur **cadangan** dan **pemulihan**. Aplikasi
+> tetap berjalan normal tanpanya; endpoint cadangan akan menyebut biner mana yang
+> tidak ditemukan.
+
 ---
 
 ## 7. Akun Demo
@@ -187,6 +242,9 @@ DB_PASSWORD=
 | Siswa | `citra` | `Siswa123!` |
 
 > Data dan kredensial di atas hanya untuk keperluan demonstrasi/ujian.
+>
+> Lupa kata sandi? Halaman masuk punya tautan **Lupa kata sandi?** yang membuat
+> token reset sekali pakai (berlaku 30 menit) tanpa perlu bantuan petugas.
 
 ---
 
@@ -197,35 +255,57 @@ DB_PASSWORD=
 3. Masuk memakai akun demo di atas.
 4. Admin diarahkan ke `/admin`, siswa ke `/perpustakaan`.
 
+**Menu baru yang bisa langsung dicoba**
+
+| Role | Menu | Alamat |
+|---|---|---|
+| Admin | Meja Sirkulasi | `/admin/sirkulasi` |
+| Admin | Denda | `/admin/denda` |
+| Admin | Laporan | `/admin/laporan` |
+| Admin | Hari Libur | `/admin/hari-libur` |
+| Admin | Kunjungan | `/admin/kunjungan` |
+| Admin | Stok Opname | `/admin/opname` |
+| Admin | Pengumuman | `/admin/pengumuman` |
+| Admin | Pengaturan (termasuk cadangan & pemulihan) | `/admin/pengaturan` |
+| Siswa | Antrean Saya | `/perpustakaan/reservasi` |
+| Siswa | Denda Saya | `/perpustakaan/denda` |
+| Siswa | Daftar Keinginan | `/perpustakaan/daftar-keinginan` |
+| Publik | Lupa kata sandi | `/lupa-sandi` |
+
 ---
 
 ## 9. Struktur Proyek
 
 ```
 UKK/
-├─ database.sql              # deliverable database (.sql)
+├─ database.sql              # deliverable database (.sql), sudah memuat migrasi 001-006
+├─ migrations/               # riwayat perubahan skema (005 = sirkulasi, 006 = operasional)
 ├─ start-lumen.bat           # penanda backend + frontend
 ├─ scripts/
-│  ├─ api-test.ps1           # 53 skenario uji otomatis
+│  ├─ api-test.ps1           # 224 pemeriksaan uji otomatis
 │  └─ last-test-run.txt      # hasil uji terakhir
 ├─ backend/
 │  └─ src/
 │     ├─ config/             # env + pool database
 │     ├─ lib/                # logger, errors, pagination, upload
 │     ├─ middleware/         # auth, validate, rate limit, error
-│     ├─ modules/            # auth, books, members, loans,
-│     │                      # dashboard, excel, activity, settings
+│     ├─ modules/            # auth, books, members, loans, fines,
+│     │                      # reservations, notifications, backup, scan,
+│     │                      # dashboard, excel, activity, settings,
+│     │                      # holidays, visits, opname, reviews,
+│     │                      # announcements, wishlist
 │     ├─ routes/             # registrasi route
 │     ├─ app.ts
 │     └─ server.ts
 ├─ frontend/
 │  └─ src/
-│     ├─ components/         # ui, charts, layout
-│     ├─ features/auth/      # AuthContext
+│     ├─ components/         # ui, charts, layout, books
+│     ├─ features/auth/      # AuthContext + gerbang ganti sandi
 │     ├─ hooks/              # useApi (React Query)
 │     ├─ layouts/            # AppShell
 │     ├─ lib/                # api, motion, utils
 │     ├─ pages/              # admin/, member/, katalog, login
+│     ├─ providers/          # ThemeProvider
 │     ├─ routes/             # guard, error boundary
 │     └─ types/
 └─ docs/                     # dokumentasi UKK
@@ -250,7 +330,7 @@ UKK/
 | `npm run dev` | Dev server di port 5173 |
 | `npm run build` | Build produksi ke `dist/` |
 | `npm run preview` | Pratinjau hasil build |
-| `npm run lint` | ESLint |
+| `npm run lint` | oxlint (pemeriksaan cepat) |
 
 **Pengujian**
 ```powershell
@@ -270,4 +350,6 @@ powershell -ExecutionPolicy Bypass -File scripts\api-test.ps1
 | [`docs/TESTING.md`](TESTING.md) | Skenario & hasil pengujian |
 | [`docs/LAPORAN_EVALUASI.md`](LAPORAN_EVALUASI.md) | Evaluasi dan rencana pengembangan |
 | [`docs/PANDUAN_PENGGUNA.md`](PANDUAN_PENGGUNA.md) | Panduan admin & siswa |
+| [`docs/DEPLOY.md`](DEPLOY.md) | Opsi deploy ke cloud (Render/Railway) |
+| [`docs/METADATA_SERI.md`](METADATA_SERI.md) | Bukti bibliografis setiap metadata seri |
 | [`database.sql`](../database.sql) | Struktur & data database |

@@ -1,4 +1,4 @@
-import { execute, query, queryOne, type RowDataPacket } from '../../config/db';
+import { execute, query, queryOne, withTransaction, type RowDataPacket } from '../../config/db';
 import { notFound } from '../../lib/errors';
 import { escapeLike, paginate, parseListQuery, type Paginated } from '../../lib/pagination';
 import { toPublicUser, type AuthUserRow, type PublicUser } from '../auth/auth.types';
@@ -195,4 +195,94 @@ export async function updateMember(id: number, input: UpdateMemberInput): Promis
 
 export async function setMemberPasswordHash(id: number, hash: string): Promise<void> {
   await execute('UPDATE users SET password_hash = ? WHERE id = ?', [hash, id]);
+}
+
+/**
+ * Inserts imported members in one transaction with sequentially reserved codes.
+ *
+ * `generateMemberCode()` counts existing rows, which is fine for a single member
+ * but would hand the same code to every row of a batch. Here the sequence is
+ * read once and incremented in memory, so 500 rows get 500 distinct codes
+ * without 500 COUNT queries.
+ *
+ * `must_change_password` is set for every row: the batch shares one password,
+ * so it must not stay valid forever.
+ *
+ * All-or-nothing: a half-imported class list is worse than a failed import.
+ */
+export async function bulkCreateMembers(
+  rows: Array<{
+    fullName: string;
+    username: string;
+    email: string;
+    className: string | null;
+    phone: string | null;
+    address: string | null;
+  }>,
+  passwordHash: string,
+): Promise<{ inserted: number; memberCodes: string[] }> {
+  return withTransaction(async (conn) => {
+    // Lock the code space for the duration so a concurrent manual add cannot
+    // take a code this batch is about to use.
+    const [codeRows] = await conn.query<RowDataPacket[]>(
+      'SELECT member_code FROM users WHERE member_code LIKE ? FOR UPDATE',
+      [`MBR-${new Date().getFullYear()}-%`],
+    );
+
+    let maxSeq = 0;
+    for (const row of codeRows) {
+      const seq = Number.parseInt(String(row.member_code).split('-').pop() ?? '0', 10);
+      if (Number.isFinite(seq) && seq > maxSeq) maxSeq = seq;
+    }
+
+    const year = new Date().getFullYear();
+    const memberCodes: string[] = [];
+
+    for (const row of rows) {
+      maxSeq += 1;
+      const memberCode = `MBR-${year}-${String(maxSeq).padStart(3, '0')}`;
+      memberCodes.push(memberCode);
+
+      await conn.execute(
+        `INSERT INTO users
+           (member_code, username, email, password_hash, full_name, role,
+            class_name, phone, address, status, must_change_password)
+         VALUES (?, ?, ?, ?, ?, 'user', ?, ?, ?, 'active', 1)`,
+        [
+          memberCode,
+          row.username,
+          row.email,
+          passwordHash,
+          row.fullName,
+          row.className,
+          row.phone,
+          row.address,
+        ],
+      );
+    }
+
+    return { inserted: rows.length, memberCodes };
+  });
+}
+
+/** Usernames and emails already taken — checked before an import commits. */
+export async function findExistingIdentities(
+  usernames: string[],
+  emails: string[],
+): Promise<{ usernames: Set<string>; emails: Set<string> }> {
+  if (usernames.length === 0 && emails.length === 0) {
+    return { usernames: new Set(), emails: new Set() };
+  }
+
+  const rows = await query<RowDataPacket & { username: string; email: string }>(
+    `SELECT username, email FROM users
+      WHERE username IN (${usernames.map(() => '?').join(',') || 'NULL'})
+         OR email IN (${emails.map(() => '?').join(',') || 'NULL'})`,
+    [...usernames, ...emails],
+  );
+
+  return {
+    usernames: new Set(rows.map((r) => String(r.username).toLowerCase())),
+    emails: new Set(rows.map((r) => String(r.email).toLowerCase())),
+  };
 }

@@ -24,6 +24,7 @@ import { PageBody, PageHeader } from '@/components/layout/PageHeader';
 import { Badge, RoleBadge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Field, Input } from '@/components/ui/input';
+import { QrCode } from '@/components/ui/qr-code';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ErrorState } from '@/components/ui/states';
 import { useAuth } from '@/features/auth/AuthContext';
@@ -171,6 +172,23 @@ function IdentityCard({ user }: { user: UserRecord }) {
       </div>
 
       <hr className="rule my-4" aria-hidden />
+
+      {/* The code the desk scanner reads. Only meaningful for students; an
+          admin account has no member code to print on a card. */}
+      {user.memberCode && user.role === 'user' ? (
+        <div className="mb-4 flex flex-col items-center gap-2 rounded-xl border border-border bg-background/40 p-4">
+          <QrCode
+            value={user.memberCode}
+            caption={user.memberCode}
+            label={`Kartu anggota ${user.fullName}`}
+            size={148}
+          />
+          <p className="text-center text-2xs leading-relaxed text-muted-foreground">
+            Tunjukkan kode ini di meja sirkulasi. Petugas memindainya untuk membuka data
+            keanggotaan Anda tanpa mengetik.
+          </p>
+        </div>
+      ) : null}
 
       <dl className="space-y-3">
         <FactRow icon={Hash} label="Kode anggota" value={fact(user.memberCode, 'Belum tersedia')} mono />

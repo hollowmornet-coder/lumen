@@ -1,5 +1,6 @@
 import ExcelJS from 'exceljs';
 import { createBookSchema, type CreateBookInput } from '../books/books.schema';
+import { createMemberSchema } from '../members/members.schema';
 import type { Book } from '../books/books.types';
 import type { Member } from '../members/members.service';
 import type { Loan } from '../loans/loans.service';
@@ -214,6 +215,103 @@ async function toBuffer(wb: ExcelJS.Workbook): Promise<Buffer> {
   return Buffer.from(data);
 }
 
+export interface FineExportRow {
+  createdAt: string;
+  memberName: string;
+  memberCode: string | null;
+  className: string | null;
+  kind: string;
+  amount: number;
+  status: string;
+  settledAt: string | null;
+  loanCode: string;
+  bookTitle: string;
+  note: string | null;
+}
+
+const FINE_KIND_LABEL: Record<string, string> = {
+  late: 'Keterlambatan',
+  damaged: 'Rusak',
+  lost: 'Hilang',
+};
+
+const FINE_STATUS_LABEL: Record<string, string> = {
+  unpaid: 'Belum dibayar',
+  paid: 'Lunas',
+  waived: 'Dibebaskan',
+};
+
+/**
+ * Fine ledger for a period.
+ *
+ * The summary sheet is what a treasurer actually signs: total collected, total
+ * waived, and total still owed. Totals are computed from the rows passed in, so
+ * they always describe exactly the data in the sheet.
+ */
+export async function buildFinesWorkbook(
+  fines: FineExportRow[],
+  range: { from?: string; to?: string },
+): Promise<Buffer> {
+  const wb = newWorkbook('LUMEN - Sistem Perpustakaan Sekolah Digital');
+  const ws = wb.addWorksheet('Denda', { views: [{ state: 'frozen', ySplit: 1 }] });
+
+  ws.columns = [
+    { header: 'Tanggal', key: 'createdAt', width: 20 },
+    { header: 'Kode Anggota', key: 'memberCode', width: 18 },
+    { header: 'Nama Anggota', key: 'memberName', width: 26 },
+    { header: 'Kelas', key: 'className', width: 12 },
+    { header: 'Jenis Denda', key: 'kind', width: 16 },
+    { header: 'Jumlah', key: 'amount', width: 14 },
+    { header: 'Status', key: 'status', width: 16 },
+    { header: 'Dibayar Pada', key: 'settledAt', width: 20 },
+    { header: 'Kode Pinjam', key: 'loanCode', width: 20 },
+    { header: 'Buku', key: 'bookTitle', width: 34 },
+    { header: 'Catatan', key: 'note', width: 30 },
+  ];
+  styleHeader(ws.getRow(1));
+
+  for (const f of fines) {
+    ws.addRow({
+      createdAt: sanitiseCell(f.createdAt),
+      memberCode: sanitiseCell(f.memberCode),
+      memberName: sanitiseCell(f.memberName),
+      className: sanitiseCell(f.className),
+      kind: FINE_KIND_LABEL[f.kind] ?? f.kind,
+      amount: f.amount,
+      status: FINE_STATUS_LABEL[f.status] ?? f.status,
+      settledAt: sanitiseCell(f.settledAt),
+      loanCode: sanitiseCell(f.loanCode),
+      bookTitle: sanitiseCell(f.bookTitle),
+      note: sanitiseCell(f.note),
+    });
+  }
+
+  const paid = fines.filter((f) => f.status === 'paid');
+  const waived = fines.filter((f) => f.status === 'waived');
+  const unpaid = fines.filter((f) => f.status === 'unpaid');
+  const sum = (rows: FineExportRow[]) => rows.reduce((acc, f) => acc + f.amount, 0);
+
+  const rangeLabel =
+    range.from || range.to
+      ? `${range.from ?? 'awal'} s.d. ${range.to ?? 'sekarang'}`
+      : 'Seluruh periode';
+
+  const info = wb.addWorksheet('Ringkasan');
+  info.columns = [
+    { header: 'Laporan', key: 'k', width: 32 },
+    { header: 'Nilai', key: 'v', width: 28 },
+  ];
+  styleHeader(info.getRow(1));
+  info.addRow({ k: 'Periode', v: rangeLabel });
+  info.addRow({ k: 'Jumlah baris denda', v: fines.length });
+  info.addRow({ k: 'Lunas (Rp)', v: sum(paid) });
+  info.addRow({ k: 'Dibebaskan (Rp)', v: sum(waived) });
+  info.addRow({ k: 'Belum dibayar (Rp)', v: sum(unpaid) });
+  info.addRow({ k: 'Dicetak pada', v: new Date().toLocaleString('id-ID') });
+
+  return toBuffer(wb);
+}
+
 // =====================================================================
 //  TEMPLATE + IMPORT
 // =====================================================================
@@ -279,9 +377,7 @@ export interface ImportRowError {
   row: number;
   field: string;
   message: string;
-}
-
-export interface ImportResult {
+}export interface ImportResult {
   totalRows: number;
   validRows: number;
   errorRows: number;
@@ -478,5 +574,233 @@ export async function parseBooksWorkbook(
     errors,
     data,
     categoryMap,
+  };
+}
+
+// =====================================================================
+//  MEMBER IMPORT
+// =====================================================================
+
+export const MEMBER_IMPORT_HEADERS = [
+  'Nama Lengkap',
+  'Username',
+  'Email',
+  'Kelas',
+  'Telepon',
+  'Alamat',
+] as const;
+
+export interface MemberImportRow {
+  fullName: string;
+  username: string;
+  email: string;
+  className: string | null;
+  phone: string | null;
+  address: string | null;
+}
+
+export interface MemberImportResult {
+  totalRows: number;
+  validRows: number;
+  errorRows: number;
+  duplicateRows: number;
+  errors: ImportRowError[];
+  data: MemberImportRow[];
+}
+
+/**
+ * Generates the same style of temporary password the single-member flow uses:
+ * readable, but not guessable.
+ *
+ * One password is generated for the WHOLE batch rather than one per row.
+ * bcrypt costs ~80 ms per hash at the configured cost; 500 individual hashes
+ * would block a request for 40 seconds. A shared batch password keeps the
+ * import fast, and every imported account is still forced to change it on
+ * first use.
+ */
+export function generateBatchPassword(): string {
+  const digits = String(Math.floor(Math.random() * 9000) + 1000);
+  return `Lum${digits}-${Math.random().toString(36).slice(2, 6)}`;
+}
+
+export function buildMembersTemplateWorkbook(): Promise<Buffer> {
+  const wb = newWorkbook('LUMEN - Sistem Perpustakaan Sekolah Digital');
+  const ws = wb.addWorksheet('Data Anggota', { views: [{ state: 'frozen', ySplit: 1 }] });
+
+  ws.columns = [
+    { header: 'Nama Lengkap', key: 'fullName', width: 28 },
+    { header: 'Username', key: 'username', width: 18 },
+    { header: 'Email', key: 'email', width: 28 },
+    { header: 'Kelas', key: 'className', width: 14 },
+    { header: 'Telepon', key: 'phone', width: 18 },
+    { header: 'Alamat', key: 'address', width: 40 },
+  ];
+  styleHeader(ws.getRow(1));
+
+  ws.addRow({
+    fullName: 'Andira Putri',
+    username: 'andira.putri',
+    email: 'andira.putri@sekolah.sch.id',
+    className: 'XI RPL 1',
+    phone: '081234567890',
+    address: 'Jl. Merdeka No. 10',
+  });
+
+  const guide = wb.addWorksheet('Petunjuk');
+  guide.columns = [
+    { header: 'Kolom', key: 'col', width: 20 },
+    { header: 'Wajib', key: 'req', width: 10 },
+    { header: 'Keterangan', key: 'desc', width: 70 },
+  ];
+  styleHeader(guide.getRow(1));
+
+  const docs: Array<[string, string, string]> = [
+    ['Nama Lengkap', 'Wajib', 'Minimal 3 karakter.'],
+    ['Username', 'Wajib', 'Unik. Huruf, angka, titik, garis bawah, atau strip.'],
+    ['Email', 'Wajib', 'Unik dan harus valid.'],
+    ['Kelas', 'Opsional', 'Contoh: XI RPL 1.'],
+    ['Telepon', 'Opsional', 'Nomor yang bisa dihubungi.'],
+    ['Alamat', 'Opsional', 'Maksimal 255 karakter.'],
+  ];
+  for (const [col, req, desc] of docs) {
+    guide.addRow({ col, req, desc });
+  }
+
+  guide.addRow({});
+  guide.addRow({ col: 'Kata sandi', req: '-', desc: 'Dibuat otomatis per anggota dan ditampilkan sekali setelah impor.' });
+  guide.addRow({ col: 'Kode anggota', req: '-', desc: 'Dibuat otomatis dengan format MBR-TAHUN-NNN.' });
+
+  return toBuffer(wb);
+}
+
+/**
+ * Validates an uploaded member workbook.
+ *
+ * Like `parseBooksWorkbook`, this performs no writes. Duplicate usernames and
+ * emails inside the file are caught here; collisions with existing accounts are
+ * caught by the caller, which can query the database.
+ */
+export async function parseMembersWorkbook(buffer: Buffer): Promise<MemberImportResult> {
+  const wb = new ExcelJS.Workbook();
+  await wb.xlsx.load(buffer as unknown as Parameters<typeof wb.xlsx.load>[0]);
+
+  const ws = wb.getWorksheet('Data Anggota') ?? wb.worksheets[0];
+  if (!ws) {
+    return {
+      totalRows: 0, validRows: 0, errorRows: 1, duplicateRows: 0,
+      errors: [{ row: 0, field: '-', message: 'File tidak memiliki lembar kerja.' }],
+      data: [],
+    };
+  }
+
+  const headerIndex = new Map<string, number>();
+  ws.getRow(1).eachCell((cell, colNumber) => {
+    const text = cellText(cell.value).toLowerCase().replace(/\s+/g, ' ').trim();
+    headerIndex.set(text, colNumber);
+  });
+
+  const missing = MEMBER_IMPORT_HEADERS.filter((h) => !headerIndex.has(h.toLowerCase()));
+  if (missing.length > 0) {
+    return {
+      totalRows: 0, validRows: 0, errorRows: 1, duplicateRows: 0,
+      errors: [{
+        row: 1,
+        field: 'Header',
+        message: `Kolom wajib tidak ditemukan: ${missing.join(', ')}. Gunakan template resmi.`,
+      }],
+      data: [],
+    };
+  }
+
+  const at = (row: ExcelJS.Row, header: string): ExcelJS.CellValue => {
+    const col = headerIndex.get(header.toLowerCase());
+    return col === undefined ? null : row.getCell(col).value;
+  };
+
+  const errors: ImportRowError[] = [];
+  const data: MemberImportRow[] = [];
+  const seenUsername = new Map<string, number>();
+  const seenEmail = new Map<string, number>();
+  let duplicateRows = 0;
+
+  ws.eachRow({ includeEmpty: false }, (row, rowIdx) => {
+    if (rowIdx === 1) return;
+
+    const fullName = cellText(at(row, 'Nama Lengkap'));
+    const username = cellText(at(row, 'Username'));
+    const email = cellText(at(row, 'Email'));
+
+    // Fully blank rows are formatting noise, not errors.
+    if (!fullName && !username && !email) return;
+
+    const rowErrors: ImportRowError[] = [];
+
+    const usernameKey = username.toLowerCase();
+    if (usernameKey && seenUsername.has(usernameKey)) {
+      duplicateRows += 1;
+      rowErrors.push({
+        row: rowIdx,
+        field: 'Username',
+        message: `Username duplikat di dalam file (sama dengan baris ${seenUsername.get(usernameKey)}).`,
+      });
+    }
+    const emailKey = email.toLowerCase();
+    if (emailKey && seenEmail.has(emailKey)) {
+      duplicateRows += 1;
+      rowErrors.push({
+        row: rowIdx,
+        field: 'Email',
+        message: `Email duplikat di dalam file (sama dengan baris ${seenEmail.get(emailKey)}).`,
+      });
+    }
+
+    // Reuse the same Zod rules as the single-member form so the two paths can
+    // never drift apart.
+    const parsed = createMemberSchema.safeParse({
+      fullName,
+      username,
+      email,
+      className: cellText(at(row, 'Kelas')) || undefined,
+      phone: cellText(at(row, 'Telepon')) || undefined,
+      address: cellText(at(row, 'Alamat')) || undefined,
+    });
+
+    if (!parsed.success) {
+      for (const issue of parsed.error.issues) {
+        rowErrors.push({
+          row: rowIdx,
+          field: issue.path.join('.') || '-',
+          message: issue.message,
+        });
+      }
+    }
+
+    // Duplicate rows are recorded above; a row that also failed validation has
+    // already contributed its own issues. Only a clean parse is inserted.
+    if (rowErrors.length > 0 || !parsed.success) {
+      errors.push(...rowErrors);
+      return;
+    }
+
+    const valid = parsed.data;
+    data.push({
+      fullName: valid.fullName,
+      username: valid.username,
+      email: valid.email,
+      className: valid.className ?? null,
+      phone: valid.phone ?? null,
+      address: valid.address ?? null,
+    });
+    seenUsername.set(usernameKey, rowIdx);
+    seenEmail.set(emailKey, rowIdx);
+  });
+
+  return {
+    totalRows: data.length + duplicateRows,
+    validRows: data.length,
+    errorRows: errors.length,
+    duplicateRows,
+    errors,
+    data,
   };
 }

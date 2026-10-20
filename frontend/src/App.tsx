@@ -3,6 +3,7 @@ import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Toaster } from 'sonner';
 import { AuthProvider } from '@/features/auth/AuthContext';
+import { ThemeProvider } from '@/providers/ThemeProvider';
 import { AppShell } from '@/layouts/AppShell';
 import { ProtectedRoute, PublicOnlyRoute } from '@/routes/guards';
 import { FullPageLoader } from '@/routes/FullPageLoader';
@@ -17,15 +18,24 @@ import ForbiddenPage from '@/pages/ForbiddenPage';
 // Route-level code splitting keeps the first paint small.
 const AdminDashboardPage = lazy(() => import('@/pages/admin/AdminDashboardPage'));
 const AdminLoansPage = lazy(() => import('@/pages/admin/AdminLoansPage'));
+const AdminCirculationPage = lazy(() => import('@/pages/admin/AdminCirculationPage'));
+const AdminFinesPage = lazy(() => import('@/pages/admin/AdminFinesPage'));
 const AdminBooksPage = lazy(() => import('@/pages/admin/AdminBooksPage'));
 const AdminMembersPage = lazy(() => import('@/pages/admin/AdminMembersPage'));
 const AdminReportsPage = lazy(() => import('@/pages/admin/AdminReportsPage'));
 const AdminActivityPage = lazy(() => import('@/pages/admin/AdminActivityPage'));
 const AdminSettingsPage = lazy(() => import('@/pages/admin/AdminSettingsPage'));
+const AdminHolidaysPage = lazy(() => import('@/pages/admin/AdminHolidaysPage'));
+const AdminVisitsPage = lazy(() => import('@/pages/admin/AdminVisitsPage'));
+const AdminOpnamePage = lazy(() => import('@/pages/admin/AdminOpnamePage'));
+const AdminAnnouncementsPage = lazy(() => import('@/pages/admin/AdminAnnouncementsPage'));
 
 const MemberHomePage = lazy(() => import('@/pages/member/MemberHomePage'));
 const MyLoansPage = lazy(() => import('@/pages/member/MyLoansPage'));
 const MyHistoryPage = lazy(() => import('@/pages/member/MyHistoryPage'));
+const MyFinesPage = lazy(() => import('@/pages/member/MyFinesPage'));
+const MyReservationsPage = lazy(() => import('@/pages/member/MyReservationsPage'));
+const MyWishlistPage = lazy(() => import('@/pages/member/MyWishlistPage'));
 const ProfilePage = lazy(() => import('@/pages/member/ProfilePage'));
 
 const CatalogPage = lazy(() => import('@/pages/CatalogPage'));
@@ -33,6 +43,8 @@ const BookDetailPage = lazy(() => import('@/pages/BookDetailPage'));
 const AuthorCollectionPage = lazy(() => import('@/pages/AuthorCollectionPage'));
 const SeriesDetailPage = lazy(() => import('@/pages/SeriesDetailPage'));
 const SeriesCatalogPage = lazy(() => import('@/pages/SeriesCatalogPage'));
+
+const ForgotPasswordPage = lazy(() => import('@/pages/ForgotPasswordPage'));
 
 /** Wraps a protected area with the app shell. */
 function Shell({ children }: { children: React.ReactNode }) {
@@ -68,6 +80,7 @@ export default function App() {
     <ErrorBoundary>
       <QueryClientProvider client={queryClient}>
         <BrowserRouter>
+          <ThemeProvider>
           <AuthProvider>
           <Suspense fallback={<FullPageLoader />}>
             <Routes>
@@ -88,6 +101,8 @@ export default function App() {
                   </PublicOnlyRoute>
                 }
               />
+              <Route path="/lupa-sandi" element={<ForgotPasswordPage />} />
+              <Route path="/reset-sandi" element={<ForgotPasswordPage />} />
 
               {/* ---------- Admin ---------- */}
               <Route
@@ -106,6 +121,26 @@ export default function App() {
                   <ProtectedRoute roles={['admin']}>
                     <Shell>
                       <AdminLoansPage />
+                    </Shell>
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/admin/sirkulasi"
+                element={
+                  <ProtectedRoute roles={['admin']}>
+                    <Shell>
+                      <AdminCirculationPage />
+                    </Shell>
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/admin/denda"
+                element={
+                  <ProtectedRoute roles={['admin']}>
+                    <Shell>
+                      <AdminFinesPage />
                     </Shell>
                   </ProtectedRoute>
                 }
@@ -160,6 +195,46 @@ export default function App() {
                   </ProtectedRoute>
                 }
               />
+              <Route
+                path="/admin/hari-libur"
+                element={
+                  <ProtectedRoute roles={['admin']}>
+                    <Shell>
+                      <AdminHolidaysPage />
+                    </Shell>
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/admin/kunjungan"
+                element={
+                  <ProtectedRoute roles={['admin']}>
+                    <Shell>
+                      <AdminVisitsPage />
+                    </Shell>
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/admin/opname"
+                element={
+                  <ProtectedRoute roles={['admin']}>
+                    <Shell>
+                      <AdminOpnamePage />
+                    </Shell>
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/admin/pengumuman"
+                element={
+                  <ProtectedRoute roles={['admin']}>
+                    <Shell>
+                      <AdminAnnouncementsPage />
+                    </Shell>
+                  </ProtectedRoute>
+                }
+              />
 
               {/* ---------- Member ---------- */}
               <Route
@@ -188,6 +263,36 @@ export default function App() {
                   <ProtectedRoute>
                     <Shell>
                       <MyHistoryPage />
+                    </Shell>
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/perpustakaan/denda"
+                element={
+                  <ProtectedRoute>
+                    <Shell>
+                      <MyFinesPage />
+                    </Shell>
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/perpustakaan/reservasi"
+                element={
+                  <ProtectedRoute>
+                    <Shell>
+                      <MyReservationsPage />
+                    </Shell>
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/perpustakaan/daftar-keinginan"
+                element={
+                  <ProtectedRoute>
+                    <Shell>
+                      <MyWishlistPage />
                     </Shell>
                   </ProtectedRoute>
                 }
@@ -298,6 +403,7 @@ export default function App() {
             }}
           />
           </AuthProvider>
+          </ThemeProvider>
         </BrowserRouter>
       </QueryClientProvider>
     </ErrorBoundary>

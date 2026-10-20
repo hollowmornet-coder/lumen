@@ -12,6 +12,26 @@ export interface LibrarySettings {
   requireApproval: boolean;
   allowSelfReturn: boolean;
   lateFeePerDay: number;
+  /** How many times a single loan may be renewed. 0 disables renewal. */
+  maxRenewals: number;
+  /** Days a member has to collect a book after approval. */
+  pickupWindowDays: number;
+  /** Blocks new borrows while the member has an unpaid fine. */
+  fineBlockBorrow: boolean;
+  /** Flat charge when a book comes back damaged. */
+  damagedFee: number;
+  /** Flat charge when a book is reported lost. */
+  lostFee: number;
+  /** Days a copy is held for the next person in the reservation queue. */
+  reservationHoldDays: number;
+  /** Pushes due dates past Sundays and holidays instead of landing on them. */
+  dueDateSkipHolidays: boolean;
+  /** Maximum active queue entries one member may hold. */
+  maxReservationsPerUser: number;
+  /** Only members with a completed loan may review a book. */
+  reviewRequiresLoan: boolean;
+  /** Whether the desk records library visits. */
+  visitTrackingEnabled: boolean;
 }
 
 const DEFAULTS: LibrarySettings = {
@@ -20,6 +40,16 @@ const DEFAULTS: LibrarySettings = {
   requireApproval: true,
   allowSelfReturn: true,
   lateFeePerDay: 1000,
+  maxRenewals: 1,
+  pickupWindowDays: 2,
+  fineBlockBorrow: true,
+  damagedFee: 5000,
+  lostFee: 50000,
+  reservationHoldDays: 2,
+  dueDateSkipHolidays: true,
+  maxReservationsPerUser: 3,
+  reviewRequiresLoan: true,
+  visitTrackingEnabled: true,
 };
 
 /** Reads all rules at once so a loan decision uses one consistent snapshot. */
@@ -45,6 +75,16 @@ export async function getSettings(): Promise<LibrarySettings> {
     requireApproval: bool('require_approval', DEFAULTS.requireApproval),
     allowSelfReturn: bool('allow_self_return', DEFAULTS.allowSelfReturn),
     lateFeePerDay: num('late_fee_per_day', DEFAULTS.lateFeePerDay),
+    maxRenewals: num('max_renewals', DEFAULTS.maxRenewals),
+    pickupWindowDays: num('pickup_window_days', DEFAULTS.pickupWindowDays),
+    fineBlockBorrow: bool('fine_block_borrow', DEFAULTS.fineBlockBorrow),
+    damagedFee: num('damaged_fee', DEFAULTS.damagedFee),
+    lostFee: num('lost_fee', DEFAULTS.lostFee),
+    reservationHoldDays: num('reservation_hold_days', DEFAULTS.reservationHoldDays),
+    dueDateSkipHolidays: bool('due_date_skip_holidays', DEFAULTS.dueDateSkipHolidays),
+    maxReservationsPerUser: num('max_reservations_per_user', DEFAULTS.maxReservationsPerUser),
+    reviewRequiresLoan: bool('review_requires_loan', DEFAULTS.reviewRequiresLoan),
+    visitTrackingEnabled: bool('visit_tracking_enabled', DEFAULTS.visitTrackingEnabled),
   };
 }
 
@@ -76,4 +116,14 @@ export const SETTING_KEYS = [
   'require_approval',
   'allow_self_return',
   'late_fee_per_day',
+  'max_renewals',
+  'pickup_window_days',
+  'fine_block_borrow',
+  'damaged_fee',
+  'lost_fee',
+  'reservation_hold_days',
+  'due_date_skip_holidays',
+  'max_reservations_per_user',
+  'review_requires_loan',
+  'visit_tracking_enabled',
 ] as const;

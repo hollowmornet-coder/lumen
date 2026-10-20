@@ -322,6 +322,14 @@ export function LoginPage() {
               {errors.password ? (
                 <p className="text-xs font-medium text-destructive">{errors.password.message}</p>
               ) : null}
+              <div className="flex justify-end">
+                <Link
+                  to="/lupa-sandi"
+                  className="rounded text-xs font-medium text-muted-foreground underline-offset-4 transition-colors hover:text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  Lupa kata sandi?
+                </Link>
+              </div>
             </div>
 
             <Button

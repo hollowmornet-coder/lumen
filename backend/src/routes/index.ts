@@ -1,14 +1,25 @@
 import { Router } from 'express';
 import activityRoutes from '../modules/activity/activity.routes';
+import announcementsRoutes from '../modules/announcements/announcements.routes';
 import authRoutes from '../modules/auth/auth.routes';
+import backupRoutes from '../modules/backup/backup.routes';
 import booksRoutes from '../modules/books/books.routes';
 import categoriesRoutes from '../modules/books/categories.routes';
 import collectionsRoutes from '../modules/collections/collections.routes';
 import dashboardRoutes from '../modules/dashboard/dashboard.routes';
 import excelRoutes from '../modules/excel/excel.routes';
+import finesRoutes from '../modules/fines/fines.routes';
+import holidaysRoutes from '../modules/holidays/holidays.routes';
 import loansRoutes from '../modules/loans/loans.routes';
 import membersRoutes from '../modules/members/members.routes';
+import notificationsRoutes from '../modules/notifications/notifications.routes';
+import opnameRoutes from '../modules/opname/opname.routes';
+import reservationsRoutes from '../modules/reservations/reservations.routes';
+import reviewsRoutes from '../modules/reviews/reviews.routes';
+import scanRoutes from '../modules/scan/scan.routes';
 import settingsRoutes from '../modules/settings/settings.routes';
+import visitsRoutes from '../modules/visits/visits.routes';
+import wishlistRoutes from '../modules/wishlist/wishlist.routes';
 
 const router = Router();
 
@@ -18,9 +29,20 @@ router.use('/categories', categoriesRoutes);
 router.use('/collections', collectionsRoutes);
 router.use('/members', membersRoutes);
 router.use('/loans', loansRoutes);
+router.use('/fines', finesRoutes);
+router.use('/reservations', reservationsRoutes);
+router.use('/notifications', notificationsRoutes);
+router.use('/reviews', reviewsRoutes);
+router.use('/wishlist', wishlistRoutes);
+router.use('/announcements', announcementsRoutes);
+router.use('/holidays', holidaysRoutes);
+router.use('/visits', visitsRoutes);
+router.use('/opnames', opnameRoutes);
+router.use('/scan', scanRoutes);
 router.use('/dashboard', dashboardRoutes);
 router.use('/activity', activityRoutes);
 router.use('/settings', settingsRoutes);
 router.use('/excel', excelRoutes);
+router.use('/backup', backupRoutes);
 
 export default router;

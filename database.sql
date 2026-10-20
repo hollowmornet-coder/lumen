@@ -18,6 +18,15 @@
 --      agar tidak ada tabel yang tidak terpakai.
 --   3. Kolom `available_copies` HANYA boleh diubah di dalam transaksi
 --      DB dengan `SELECT ... FOR UPDATE` (lihat backend/src/modules/loans).
+--   4. Denda adalah DATA (`fines`), di-snapshot saat buku dikembalikan.
+--      Mengubah tarif denda tidak menulis ulang tagihan yang sudah ada.
+--   5. `pickup_deadline` DISIMPAN pada `loans`, bukan dihitung dari setting
+--      saat dibaca: tenggat melekat pada keputusan petugas saat itu.
+--   6. Urutan antrean (`reservations`) dihitung dari `created_at`, tidak ada
+--      kolom posisi yang harus disinkronkan ulang.
+--
+--  Skema ini sudah memuat seluruh perubahan migrasi 001-005, sehingga
+--  instalasi baru tidak perlu menjalankan migrasi satu per satu.
 -- =====================================================================
 
 SET NAMES utf8mb4;
@@ -32,6 +41,18 @@ USE `lumen_db`;
 -- ---------------------------------------------------------------------
 -- TABEL: users  (Admin / Petugas + Siswa)
 -- ---------------------------------------------------------------------
+-- Urutan drop dibalik dari urutan create supaya foreign key tidak menghalangi.
+-- Tabel dari migrasi 005-006 ikut didrop agar impor ulang benar-benar bersih.
+DROP TABLE IF EXISTS `wishlists`;
+DROP TABLE IF EXISTS `announcements`;
+DROP TABLE IF EXISTS `book_reviews`;
+DROP TABLE IF EXISTS `stock_opnames`;
+DROP TABLE IF EXISTS `library_visits`;
+DROP TABLE IF EXISTS `holidays`;
+DROP TABLE IF EXISTS `password_resets`;
+DROP TABLE IF EXISTS `notifications`;
+DROP TABLE IF EXISTS `reservations`;
+DROP TABLE IF EXISTS `fines`;
 DROP TABLE IF EXISTS `activity_logs`;
 DROP TABLE IF EXISTS `loans`;
 DROP TABLE IF EXISTS `book_series_items`;
@@ -54,6 +75,7 @@ CREATE TABLE `users` (
   `phone`         VARCHAR(30)     NULL,
   `address`       VARCHAR(200)    NULL,
   `status`        ENUM('active','inactive') NOT NULL DEFAULT 'active',
+  `must_change_password` TINYINT(1)       NOT NULL DEFAULT 0,  -- akun hasil impor massal
   `last_login_at` DATETIME        NULL,
   `created_at`    TIMESTAMP       NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at`    TIMESTAMP       NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -117,6 +139,8 @@ CREATE TABLE `books` (
   `shelf_location`   VARCHAR(50)     NULL,
   `total_copies`     SMALLINT UNSIGNED NOT NULL DEFAULT 1,
   `available_copies` SMALLINT UNSIGNED NOT NULL DEFAULT 1,
+  `damaged_copies`   SMALLINT UNSIGNED NOT NULL DEFAULT 0
+                     COMMENT 'Eksemplar rusak, tidak dapat dipinjam',
   `cover_path`       VARCHAR(255)    NULL,
   `status`           ENUM('active','inactive') NOT NULL DEFAULT 'active',
   `created_at`       TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -137,6 +161,11 @@ CREATE TABLE `books` (
     ON DELETE RESTRICT ON UPDATE CASCADE,
   CONSTRAINT `ck_books_stock` CHECK (
     `available_copies` >= 0 AND `available_copies` <= `total_copies`
+  ),
+  -- Invarian baru sejak migrasi 005: rusak mengurangi yang dapat dipinjam,
+  -- tetapi tetap bagian dari inventaris.
+  CONSTRAINT `ck_books_damaged` CHECK (
+    `available_copies` + `damaged_copies` <= `total_copies`
   ),
   CONSTRAINT `ck_books_year` CHECK (`publish_year` IS NULL OR `publish_year` BETWEEN 1000 AND 2999)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -201,12 +230,19 @@ CREATE TABLE `loans` (
   `user_id`            INT UNSIGNED NOT NULL,
   `book_id`            INT UNSIGNED NOT NULL,
   `quantity`           SMALLINT UNSIGNED NOT NULL DEFAULT 1,
+  `renew_count`        SMALLINT UNSIGNED NOT NULL DEFAULT 0
+                       COMMENT 'Berapa kali sudah diperpanjang',
   `status`             ENUM('pending','approved','rejected','borrowed',
                             'return_requested','returned','cancelled')
                         NOT NULL DEFAULT 'pending',
   `requested_at`       DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `approved_at`        DATETIME     NULL,
   `approved_by`        INT UNSIGNED NULL,
+  -- DISIMPAN, bukan dihitung dari setting saat dibaca: tenggat melekat pada
+  -- keputusan admin saat itu. Mengubah `pickup_window_days` besok tidak boleh
+  -- menghidupkan kembali transaksi yang sudah kedaluwarsa.
+  `pickup_deadline`    DATETIME     NULL
+                       COMMENT 'Batas pengambilan setelah disetujui',
   `rejected_at`        DATETIME     NULL,
   `rejected_reason`    VARCHAR(255) NULL,
   `borrowed_at`        DATETIME     NULL,
@@ -227,6 +263,7 @@ CREATE TABLE `loans` (
   KEY `idx_loans_due_at` (`due_at`),
   KEY `idx_loans_requested_at` (`requested_at`),
   KEY `idx_loans_user_status` (`user_id`, `status`),
+  KEY `idx_loans_pickup` (`pickup_deadline`),
   CONSTRAINT `fk_loans_user`
     FOREIGN KEY (`user_id`) REFERENCES `users` (`id`)
     ON DELETE RESTRICT ON UPDATE CASCADE,
@@ -275,6 +312,273 @@ CREATE TABLE `settings` (
   UNIQUE KEY `uq_settings_key` (`setting_key`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- ---------------------------------------------------------------------
+-- TABEL: fines  (denda sebagai data)
+--
+-- Denda di-SNAPSHOT saat buku dikembalikan. Kalau tarif harian diubah bulan
+-- depan, denda yang sudah tercatat tidak ikut berubah. Ini yang membedakan
+-- "catatan keuangan" dari "angka tampilan".
+--
+-- UNIQUE (loan_id, kind): satu transaksi tidak bisa punya dua denda
+-- keterlambatan, sehingga pengembalian yang di-klik dua kali tidak
+-- menggandakan tagihan.
+-- ---------------------------------------------------------------------
+CREATE TABLE `fines` (
+  `id`          INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `loan_id`     INT UNSIGNED NOT NULL,
+  `user_id`     INT UNSIGNED NOT NULL,
+  `kind`        ENUM('late','damaged','lost') NOT NULL,
+  `amount`      INT UNSIGNED NOT NULL,
+  `status`      ENUM('unpaid','paid','waived') NOT NULL DEFAULT 'unpaid',
+  `settled_at`  DATETIME NULL,
+  `settled_by`  INT UNSIGNED NULL,
+  `note`        VARCHAR(255) NULL,
+  `created_at`  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_fines_loan_kind` (`loan_id`, `kind`),
+  KEY `idx_fines_user_status` (`user_id`, `status`),
+  KEY `idx_fines_created` (`created_at`),
+  CONSTRAINT `fk_fines_loan`
+    FOREIGN KEY (`loan_id`) REFERENCES `loans` (`id`)
+    ON DELETE CASCADE ON UPDATE CASCADE,
+  CONSTRAINT `fk_fines_user`
+    FOREIGN KEY (`user_id`) REFERENCES `users` (`id`)
+    ON DELETE CASCADE ON UPDATE CASCADE,
+  CONSTRAINT `fk_fines_settled_by`
+    FOREIGN KEY (`settled_by`) REFERENCES `users` (`id`)
+    ON DELETE SET NULL ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ---------------------------------------------------------------------
+-- TABEL: notifications  (pesan dalam aplikasi)
+--
+-- `dedupe_key` mencegah pengingat yang sama ditulis berkali-kali, misalnya
+-- "due-<loanId>-2026-10-20". Unik per pengguna, jadi satu pengingat hanya
+-- muncul sekali untuk satu orang.
+-- ---------------------------------------------------------------------
+CREATE TABLE `notifications` (
+  `id`         INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `user_id`    INT UNSIGNED NOT NULL,
+  `type`       VARCHAR(40)  NOT NULL,   -- loan.approved, loan.due_soon, fine.created, ...
+  `title`      VARCHAR(150) NOT NULL,
+  `body`       VARCHAR(500) NULL,
+  `link`       VARCHAR(200) NULL,
+  `read_at`    DATETIME NULL,
+  `dedupe_key` VARCHAR(120) NULL,
+  `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_notif_dedupe` (`user_id`, `dedupe_key`),
+  KEY `idx_notif_user_read` (`user_id`, `read_at`),
+  KEY `idx_notif_created` (`created_at`),
+  CONSTRAINT `fk_notif_user`
+    FOREIGN KEY (`user_id`) REFERENCES `users` (`id`)
+    ON DELETE CASCADE ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ---------------------------------------------------------------------
+-- TABEL: reservations  (antrean saat stok habis)
+--
+-- Urutan antrean ditentukan `created_at` (yang lebih dulu menunggu dilayani
+-- lebih dulu). Tidak ada kolom `position` yang harus dihitung ulang setiap
+-- ada pembatalan - itu sumber drift.
+-- ---------------------------------------------------------------------
+CREATE TABLE `reservations` (
+  `id`         INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `book_id`    INT UNSIGNED NOT NULL,
+  `user_id`    INT UNSIGNED NOT NULL,
+  `status`     ENUM('waiting','ready','fulfilled','expired','cancelled')
+               NOT NULL DEFAULT 'waiting',
+  `ready_at`   DATETIME NULL,
+  `expires_at` DATETIME NULL,
+  `note`       VARCHAR(255) NULL,
+  `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_res_book_status` (`book_id`, `status`),
+  KEY `idx_res_user_status` (`user_id`, `status`),
+  CONSTRAINT `fk_res_book`
+    FOREIGN KEY (`book_id`) REFERENCES `books` (`id`)
+    ON DELETE CASCADE ON UPDATE CASCADE,
+  CONSTRAINT `fk_res_user`
+    FOREIGN KEY (`user_id`) REFERENCES `users` (`id`)
+    ON DELETE CASCADE ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ---------------------------------------------------------------------
+-- TABEL: password_resets  (reset kata sandi mandiri)
+--
+-- Yang disimpan HANYA hash SHA-256 dari token. Bocornya isi tabel ini tidak
+-- memberi penyerang token yang bisa dipakai.
+-- ---------------------------------------------------------------------
+CREATE TABLE `password_resets` (
+  `id`         INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `user_id`    INT UNSIGNED NOT NULL,
+  `token_hash` CHAR(64) NOT NULL,
+  `expires_at` DATETIME NOT NULL,
+  `used_at`    DATETIME NULL,
+  `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_pr_token` (`token_hash`),
+  KEY `idx_pr_user` (`user_id`),
+  CONSTRAINT `fk_pr_user`
+    FOREIGN KEY (`user_id`) REFERENCES `users` (`id`)
+    ON DELETE CASCADE ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ---------------------------------------------------------------------
+-- TABEL: holidays  (kalender hari libur)
+--
+-- Dipakai saat menghitung `due_at`: bila tanggal jatuh tempo mengenai hari
+-- libur (atau hari Minggu), tenggat digeser ke hari kerja berikutnya. Tanpa
+-- tabel ini, buku yang jatuh tempo saat libur sekolah dihitung terlambat
+-- padahal siswa tidak punya kesempatan mengembalikannya.
+-- ---------------------------------------------------------------------
+CREATE TABLE `holidays` (
+  `id`           INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `holiday_date` DATE NOT NULL,
+  `name`         VARCHAR(120) NOT NULL,
+  `created_at`   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_holiday_date` (`holiday_date`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ---------------------------------------------------------------------
+-- TABEL: library_visits  (kunjungan harian)
+--
+-- Satu baris = satu kunjungan. Siswa memindai kartu di pintu masuk, atau
+-- petugas mencatat manual bagi yang tidak membawa kartu (`user_id` NULL dan
+-- `guest_name` terisi).
+--
+-- UNIQUE (user_id, visit_date) membuat satu siswa terhitung sekali per hari
+-- walau kartunya dipindai berkali-kali.
+-- ---------------------------------------------------------------------
+CREATE TABLE `library_visits` (
+  `id`         INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `user_id`    INT UNSIGNED NULL,
+  `guest_name` VARCHAR(100) NULL,
+  `purpose`    ENUM('read','borrow','return','study','other') NOT NULL DEFAULT 'read',
+  `visit_date` DATE NOT NULL,
+  `created_by` INT UNSIGNED NULL,
+  `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_visit_user_day` (`user_id`, `visit_date`),
+  KEY `idx_visit_date` (`visit_date`),
+  CONSTRAINT `fk_visit_user`
+    FOREIGN KEY (`user_id`) REFERENCES `users` (`id`)
+    ON DELETE CASCADE ON UPDATE CASCADE,
+  CONSTRAINT `fk_visit_created_by`
+    FOREIGN KEY (`created_by`) REFERENCES `users` (`id`)
+    ON DELETE SET NULL ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ---------------------------------------------------------------------
+-- TABEL: stock_opnames  (audit stok fisik)
+--
+-- `expected` adalah angka sistem SAAT sesi dimulai (snapshot), `counted`
+-- adalah hasil hitung fisik. Selisih TIDAK langsung mengubah stok: petugas
+-- harus menyetujui lebih dulu (`applied_at`), karena hitungan fisik bisa
+-- salah. Ini memisahkan "catatan" dari "perubahan data".
+-- ---------------------------------------------------------------------
+CREATE TABLE `stock_opnames` (
+  `id`          INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `book_id`     INT UNSIGNED NOT NULL,
+  `expected`    SMALLINT UNSIGNED NOT NULL,
+  `counted`     SMALLINT UNSIGNED NOT NULL,
+  `note`        VARCHAR(255) NULL,
+  `applied_at`  DATETIME NULL,
+  `applied_by`  INT UNSIGNED NULL,
+  `created_by`  INT UNSIGNED NOT NULL,
+  `created_at`  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_opname_book` (`book_id`, `created_at`),
+  KEY `idx_opname_pending` (`applied_at`),
+  CONSTRAINT `fk_opname_book`
+    FOREIGN KEY (`book_id`) REFERENCES `books` (`id`)
+    ON DELETE CASCADE ON UPDATE CASCADE,
+  CONSTRAINT `fk_opname_created_by`
+    FOREIGN KEY (`created_by`) REFERENCES `users` (`id`)
+    ON DELETE CASCADE ON UPDATE CASCADE,
+  CONSTRAINT `fk_opname_applied_by`
+    FOREIGN KEY (`applied_by`) REFERENCES `users` (`id`)
+    ON DELETE SET NULL ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ---------------------------------------------------------------------
+-- TABEL: book_reviews  (ulasan & rating)
+--
+-- UNIQUE (book_id, user_id): satu siswa satu ulasan per buku. Mengubah
+-- pendapat = mengedit ulasan yang sama, bukan menumpuk baris baru.
+--
+-- Aturan "hanya yang pernah meminjam boleh mengulas" ditegakkan di service
+-- (butuh data loans), bukan di skema.
+-- ---------------------------------------------------------------------
+CREATE TABLE `book_reviews` (
+  `id`         INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `book_id`    INT UNSIGNED NOT NULL,
+  `user_id`    INT UNSIGNED NOT NULL,
+  `rating`     TINYINT UNSIGNED NOT NULL,
+  `comment`    VARCHAR(1000) NULL,
+  `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_review_book_user` (`book_id`, `user_id`),
+  KEY `idx_review_book` (`book_id`, `created_at`),
+  CONSTRAINT `fk_review_book`
+    FOREIGN KEY (`book_id`) REFERENCES `books` (`id`)
+    ON DELETE CASCADE ON UPDATE CASCADE,
+  CONSTRAINT `fk_review_user`
+    FOREIGN KEY (`user_id`) REFERENCES `users` (`id`)
+    ON DELETE CASCADE ON UPDATE CASCADE,
+  CONSTRAINT `ck_review_rating` CHECK (`rating` BETWEEN 1 AND 5)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ---------------------------------------------------------------------
+-- TABEL: announcements  (pengumuman admin)
+--
+-- `audience` menentukan siapa yang melihat: all / user / admin.
+-- `expires_at` NULL berarti tidak pernah kedaluwarsa. Pengumuman yang
+-- kedaluwarsa tetap tersimpan sebagai riwayat tetapi tidak ditampilkan.
+-- ---------------------------------------------------------------------
+CREATE TABLE `announcements` (
+  `id`         INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `title`      VARCHAR(150) NOT NULL,
+  `body`       VARCHAR(2000) NOT NULL,
+  `audience`   ENUM('all','user','admin') NOT NULL DEFAULT 'all',
+  `pinned`     TINYINT(1) NOT NULL DEFAULT 0,
+  `expires_at` DATETIME NULL,
+  `created_by` INT UNSIGNED NOT NULL,
+  `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_ann_visible` (`audience`, `created_at`),
+  CONSTRAINT `fk_ann_created_by`
+    FOREIGN KEY (`created_by`) REFERENCES `users` (`id`)
+    ON DELETE CASCADE ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ---------------------------------------------------------------------
+-- TABEL: wishlists  (daftar keinginan)
+--
+-- Berbeda dari `reservations`: wishlist TIDAK memesan stok dan tidak
+-- memberi posisi antrean. Ia hanya penanda pribadi ("ingin dibaca") yang
+-- bisa dipakai petugas untuk melihat judul mana yang paling diminati.
+-- ---------------------------------------------------------------------
+CREATE TABLE `wishlists` (
+  `id`         INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `user_id`    INT UNSIGNED NOT NULL,
+  `book_id`    INT UNSIGNED NOT NULL,
+  `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_wish_user_book` (`user_id`, `book_id`),
+  KEY `idx_wish_book` (`book_id`),
+  CONSTRAINT `fk_wish_user`
+    FOREIGN KEY (`user_id`) REFERENCES `users` (`id`)
+    ON DELETE CASCADE ON UPDATE CASCADE,
+  CONSTRAINT `fk_wish_book`
+    FOREIGN KEY (`book_id`) REFERENCES `books` (`id`)
+    ON DELETE CASCADE ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 SET FOREIGN_KEY_CHECKS = 1;
 
 -- =====================================================================
@@ -316,7 +620,33 @@ INSERT INTO `settings` (`setting_key`, `setting_value`, `description`) VALUES
   ('loan_duration_days','7',       'Masa pinjam dalam hari sejak buku diserahkan'),
   ('require_approval',  '1',       '1 = peminjaman harus disetujui admin, 0 = langsung aktif'),
   ('allow_self_return', '1',       '1 = siswa boleh mengajukan pengembalian via aplikasi'),
-  ('late_fee_per_day',  '1000',    'Denda keterlambatan per hari (dalam Rupiah)');
+  ('late_fee_per_day',  '1000',    'Denda keterlambatan per hari (dalam Rupiah)'),
+  ('max_renewals',        '1',     'Maksimal berapa kali satu peminjaman boleh diperpanjang'),
+  ('pickup_window_days',  '2',     'Batas hari pengambilan setelah peminjaman disetujui'),
+  ('fine_block_borrow',   '1',     '1 = siswa dengan denda belum lunas tidak boleh meminjam'),
+  ('damaged_fee',         '5000',  'Denda tetap bila buku dikembalikan dalam kondisi rusak'),
+  ('lost_fee',            '50000', 'Denda tetap bila buku hilang'),
+  ('reservation_hold_days','2',    'Lama buku ditahan untuk pemesan setelah tersedia'),
+  ('due_date_skip_holidays',    '1', '1 = jatuh tempo digeser ke hari kerja bila mengenai hari libur/Minggu'),
+  ('max_reservations_per_user', '3', 'Maksimal antrean aktif yang boleh dimiliki satu anggota'),
+  ('review_requires_loan',      '1', '1 = hanya anggota yang pernah meminjam buku boleh mengulas'),
+  ('visit_tracking_enabled',    '1', '1 = pencatatan kunjungan perpustakaan aktif');
+
+-- ---------- [DEMO] Hari libur nasional 2026 ----------
+-- Hanya tanggal yang pasti. Cuti bersama yang berubah tiap tahun sengaja
+-- tidak dimasukkan agar tidak menjadi data yang salah.
+INSERT INTO `holidays` (`holiday_date`, `name`) VALUES
+  ('2026-01-01', 'Tahun Baru Masehi'),
+  ('2026-03-19', 'Hari Suci Nyepi'),
+  ('2026-03-20', 'Hari Raya Idul Fitri'),
+  ('2026-03-21', 'Hari Raya Idul Fitri'),
+  ('2026-04-03', 'Wafat Isa Al Masih'),
+  ('2026-05-01', 'Hari Buruh Internasional'),
+  ('2026-05-14', 'Kenaikan Isa Al Masih'),
+  ('2026-05-27', 'Hari Raya Idul Adha'),
+  ('2026-06-01', 'Hari Lahir Pancasila'),
+  ('2026-08-17', 'Hari Kemerdekaan RI'),
+  ('2026-12-25', 'Hari Raya Natal');
 
 -- ---------- [DEMO] Pengguna ----------
 -- password_hash = bcrypt('Admin123!')  /  bcrypt('Siswa123!')

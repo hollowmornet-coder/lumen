@@ -1,15 +1,18 @@
 import * as React from 'react';
 import { motion, useReducedMotion, type Variants } from 'framer-motion';
+import { toast } from 'sonner';
 import {
   ArrowUpDown,
   Ban,
   BookOpen,
+  CalendarClock,
   Check,
   Handshake,
   PackageCheck,
   RefreshCw,
   Search,
   SlidersHorizontal,
+  Undo2,
   X,
 } from 'lucide-react';
 import { PageBody, PageHeader } from '@/components/layout/PageHeader';
@@ -29,10 +32,10 @@ import { Pagination } from '@/components/ui/pagination';
 import { TableSkeleton } from '@/components/ui/skeleton';
 import { EmptyState, ErrorState, NoResultsState } from '@/components/ui/states';
 import { api } from '@/lib/api';
-import { useApiMutation, useDebounced, useListParams, useLoans } from '@/hooks/useApi';
+import { useApiMutation, useDebounced, useListParams, useLoans, useSettings } from '@/hooks/useApi';
 import { cn, formatDate, formatNumber, formatRupiah, relativeDays } from '@/lib/utils';
 import { staggerContainer, staggerItem } from '@/lib/motion';
-import type { Loan } from '@/types';
+import type { BulkApproveResult, Loan } from '@/types';
 
 /** Motion collapses to a static state when the OS asks for less movement. */
 const STILL: Variants = { hidden: {}, show: {} };
@@ -42,6 +45,7 @@ const STATUS_OPTIONS = [
   { value: 'all', label: 'Semua status' },
   { value: 'pending', label: 'Menunggu persetujuan' },
   { value: 'approved', label: 'Disetujui, siap diserahkan' },
+  { value: 'pickup_expired', label: 'Lewat batas ambil' },
   { value: 'borrowed', label: 'Sedang dipinjam' },
   { value: 'return_requested', label: 'Permintaan pengembalian' },
   { value: 'overdue', label: 'Terlambat' },
@@ -70,7 +74,18 @@ const CONDITIONS = [
 type ReturnCondition = (typeof CONDITIONS)[number]['value'];
 
 /** Everything that can shift once a loan changes state. */
-const INVALIDATE = [['loans'], ['dashboard'], ['books'], ['activity']] as const;
+const INVALIDATE = [
+  ['loans'],
+  ['my-loans'],
+  ['dashboard'],
+  ['books'],
+  ['activity'],
+  ['fines'],
+  ['my-fines'],
+  ['members'],
+  ['reservations'],
+  ['my-reservations'],
+] as const;
 
 interface RejectVars {
   id: number;
@@ -90,10 +105,28 @@ function useLoanMutations() {
     invalidate: INVALIDATE,
   });
 
+  const borrow = useApiMutation<number, Loan>({
+    mutationFn: async (id) => (await api.post<Loan>(`/loans/${id}/borrow`)).data,
+    successMessage: 'Buku ditandai sudah diserahkan.',
+    invalidate: INVALIDATE,
+  });
+
   const reject = useApiMutation<RejectVars, Loan>({
     mutationFn: async ({ id, reason }) =>
       (await api.post<Loan>(`/loans/${id}/reject`, { reason })).data,
     successMessage: 'Permohonan peminjaman ditolak.',
+    invalidate: INVALIDATE,
+  });
+
+  const renew = useApiMutation<number, Loan>({
+    mutationFn: async (id) => (await api.post<Loan>(`/loans/${id}/renew`)).data,
+    successMessage: (loan) => `Diperpanjang. Jatuh tempo ${formatDate(loan.dueAt)}.`,
+    invalidate: INVALIDATE,
+  });
+
+  const release = useApiMutation<number, Loan>({
+    mutationFn: async (id) => (await api.post<Loan>(`/loans/${id}/release`)).data,
+    successMessage: 'Peminjaman dilepas dan stok dikembalikan.',
     invalidate: INVALIDATE,
   });
 
@@ -105,11 +138,14 @@ function useLoanMutations() {
           note: note.trim() || undefined,
         })
       ).data,
-    successMessage: 'Pengembalian berhasil dicatat.',
+    successMessage: (loan) =>
+      loan.unpaidFines > 0
+        ? `Pengembalian dicatat. Denda belum lunas: ${formatRupiah(loan.unpaidFines)}.`
+        : 'Pengembalian berhasil dicatat.',
     invalidate: INVALIDATE,
   });
 
-  return { approve, reject, confirmReturn };
+  return { approve, borrow, reject, renew, release, confirmReturn };
 }
 
 type LoanMutations = ReturnType<typeof useLoanMutations>;
@@ -148,6 +184,30 @@ export default function AdminLoansPage() {
 
   const loans = useLoans(query);
   const mutations = useLoanMutations();
+
+  // --- Bulk approval ---
+  // Selection is cleared whenever the underlying list changes, because a loan
+  // that scrolled out of view must not stay silently selected.
+  const [selected, setSelected] = React.useState<Set<number>>(() => new Set());
+  React.useEffect(() => {
+    setSelected(new Set());
+  }, [status, page, debouncedTerm]);
+
+  const bulkApprove = useApiMutation<number[], BulkApproveResult>({
+    mutationFn: async (loanIds) =>
+      (await api.post<BulkApproveResult>('/loans/bulk-approve', { loanIds })).data,
+    invalidate: INVALIDATE,
+    onSuccess: (result) => {
+      setSelected(new Set());
+      if (result.failed.length > 0) {
+        toast.warning(
+          `${result.approved.length} disetujui, ${result.failed.length} gagal: ${result.failed
+            .map((f) => `#${f.id}`)
+            .join(', ')}`,
+        );
+      }
+    },
+  });
 
   const reduce = useReducedMotion();
   const containerVariants = reduce ? STILL : staggerContainer(0.035);
@@ -299,6 +359,48 @@ export default function AdminLoansPage() {
           ) : null}
         </div>
 
+        {/* ---------- Bulk approval ---------- */}
+        {status === 'pending' && items.length > 0 ? (
+          <div className="panel flex flex-wrap items-center gap-3 p-3">
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                className="size-4 rounded border-border"
+                checked={selected.size === items.length && items.length > 0}
+                onChange={(e) =>
+                  setSelected(
+                    e.target.checked ? new Set(items.map((l) => l.id)) : new Set<number>(),
+                  )
+                }
+                aria-label="Pilih semua permohonan di halaman ini"
+              />
+              <span className="text-muted-foreground">
+                {selected.size > 0
+                  ? `${selected.size} dari ${items.length} dipilih`
+                  : 'Pilih semua di halaman ini'}
+              </span>
+            </label>
+
+            <div className="ml-auto flex items-center gap-2">
+              {selected.size > 0 ? (
+                <Button variant="ghost" size="sm" onClick={() => setSelected(new Set())}>
+                  Bersihkan
+                </Button>
+              ) : null}
+              <Button
+                size="sm"
+                variant="success"
+                disabled={selected.size === 0 || bulkApprove.isPending}
+                loading={bulkApprove.isPending}
+                onClick={() => bulkApprove.mutate([...selected])}
+              >
+                <Check className="size-3.5" aria-hidden />
+                Setujui {selected.size > 0 ? selected.size : ''} terpilih
+              </Button>
+            </div>
+          </div>
+        ) : null}
+
         {/* ---------- Table ---------- */}
         <section className="panel overflow-hidden" aria-label="Daftar transaksi peminjaman">
           {loans.isFetching && !loans.isLoading ? (
@@ -409,17 +511,37 @@ export default function AdminLoansPage() {
                       className="border-b border-border transition-colors last:border-0 hover:bg-muted/40"
                     >
                       <td className="whitespace-nowrap px-4 py-3 align-top">
-                        <span className="block font-mono text-xs font-semibold text-foreground">
-                          {loan.loanCode}
-                        </span>
-                        <span className="mt-0.5 block text-2xs text-muted-foreground">
-                          {formatDate(loan.requestedAt)}
-                        </span>
-                        {loan.quantity > 1 ? (
-                          <span className="mt-1 block text-2xs text-muted-foreground">
-                            {loan.quantity} eksemplar
-                          </span>
-                        ) : null}
+                        <div className="flex items-start gap-2">
+                          {status === 'pending' ? (
+                            <input
+                              type="checkbox"
+                              className="mt-0.5 size-4 shrink-0 rounded border-border"
+                              checked={selected.has(loan.id)}
+                              onChange={(e) =>
+                                setSelected((prev) => {
+                                  const next = new Set(prev);
+                                  if (e.target.checked) next.add(loan.id);
+                                  else next.delete(loan.id);
+                                  return next;
+                                })
+                              }
+                              aria-label={`Pilih ${loan.loanCode}`}
+                            />
+                          ) : null}
+                          <div>
+                            <span className="block font-mono text-xs font-semibold text-foreground">
+                              {loan.loanCode}
+                            </span>
+                            <span className="mt-0.5 block text-2xs text-muted-foreground">
+                              {formatDate(loan.requestedAt)}
+                            </span>
+                            {loan.quantity > 1 ? (
+                              <span className="mt-1 block text-2xs text-muted-foreground">
+                                {loan.quantity} eksemplar
+                              </span>
+                            ) : null}
+                          </div>
+                        </div>
                       </td>
 
                       <td className="px-4 py-3 align-top">
@@ -525,6 +647,13 @@ export default function AdminLoansPage() {
 /* ------------------------------------------------------------------ */
 
 function LoanActions({ loan, actions }: { loan: Loan; actions: LoanMutations }) {
+  const settings = useSettings();
+  const maxRenewals = Number.parseInt(
+    settings.data?.find((s) => s.key === 'max_renewals')?.value ?? '1',
+    10,
+  );
+  const pickupExpired = loan.displayStatus === 'pickup_expired';
+
   if (loan.status === 'pending') {
     return (
       <div className="flex flex-wrap items-center justify-end gap-1.5">
@@ -566,41 +695,120 @@ function LoanActions({ loan, actions }: { loan: Loan; actions: LoanMutations }) 
 
   if (loan.status === 'approved') {
     return (
-      <ConfirmDialog>
-        <ConfirmTrigger asChild>
-          <Button size="sm" variant="primary" disabled={actions.approve.isPending}>
-            <Handshake className="size-3.5" aria-hidden />
-            Serahkan
-          </Button>
-        </ConfirmTrigger>
-        <ConfirmContent
-          title="Serahkan buku kepada peminjam?"
-          tone="primary"
-          confirmLabel="Ya, diserahkan"
-          cancelLabel="Batal"
-          onConfirm={async () => {
-            try {
-              await actions.approve.mutateAsync(loan.id);
-            } catch {
-              // The toast already carries the server message.
-            }
-          }}
-          description={
-            <>
-              Tandai buku <strong>{loan.book.title}</strong> sudah fisik diterima oleh{' '}
-              <strong>{loan.member.fullName}</strong>. Jatuh tempo dihitung sejak hari ini.
-            </>
-          }
-        >
-          <p className="font-mono text-xs text-muted-foreground">Kode: {loan.loanCode}</p>
-        </ConfirmContent>
-      </ConfirmDialog>
+      <div className="flex flex-wrap items-center justify-end gap-1.5">
+        {pickupExpired ? (
+          <>
+            <Badge tone="warning">Lewat batas ambil</Badge>
+            <ConfirmDialog>
+              <ConfirmTrigger asChild>
+                <Button size="sm" variant="danger" disabled={actions.release.isPending}>
+                  <Undo2 className="size-3.5" aria-hidden />
+                  Lepas
+                </Button>
+              </ConfirmTrigger>
+              <ConfirmContent
+                title="Lepas peminjaman ini?"
+                tone="danger"
+                confirmLabel="Ya, lepas"
+                cancelLabel="Batal"
+                onConfirm={async () => {
+                  try {
+                    await actions.release.mutateAsync(loan.id);
+                  } catch {
+                    // The toast already carries the server message.
+                  }
+                }}
+                description={
+                  <>
+                    Eksemplar <strong>{loan.book.title}</strong> akan kembali ke rak dan
+                    kesempatan diberikan kepada anggota berikutnya dalam antrean.
+                  </>
+                }
+              >
+                <p className="text-xs text-muted-foreground">
+                  Batas ambil {formatDate(loan.pickupDeadline)} · {loan.member.fullName}
+                </p>
+              </ConfirmContent>
+            </ConfirmDialog>
+          </>
+        ) : (
+          <ConfirmDialog>
+            <ConfirmTrigger asChild>
+              <Button size="sm" variant="primary" disabled={actions.borrow.isPending}>
+                <Handshake className="size-3.5" aria-hidden />
+                Serahkan
+              </Button>
+            </ConfirmTrigger>
+            <ConfirmContent
+              title="Serahkan buku kepada peminjam?"
+              tone="primary"
+              confirmLabel="Ya, diserahkan"
+              cancelLabel="Batal"
+              onConfirm={async () => {
+                try {
+                  await actions.borrow.mutateAsync(loan.id);
+                } catch {
+                  // The toast already carries the server message.
+                }
+              }}
+              description={
+                <>
+                  Tandai buku <strong>{loan.book.title}</strong> sudah fisik diterima oleh{' '}
+                  <strong>{loan.member.fullName}</strong>.
+                </>
+              }
+            >
+              <p className="text-xs text-muted-foreground">
+                Batas ambil {formatDate(loan.pickupDeadline)}
+                {loan.pickupDeadline ? ` (${relativeDays(loan.pickupDeadline)})` : ''}
+              </p>
+            </ConfirmContent>
+          </ConfirmDialog>
+        )}
+      </div>
     );
   }
 
   if (loan.status === 'borrowed' || loan.status === 'return_requested') {
+    const overdue = loan.displayStatus === 'overdue';
+    const canRenew = !overdue && maxRenewals > 0 && loan.renewCount < maxRenewals;
+
     return (
       <div className="flex flex-wrap items-center justify-end gap-1.5">
+        {canRenew ? (
+          <ConfirmDialog>
+            <ConfirmTrigger asChild>
+              <Button size="sm" variant="outline" disabled={actions.renew.isPending}>
+                <CalendarClock className="size-3.5" aria-hidden />
+                Perpanjang
+              </Button>
+            </ConfirmTrigger>
+            <ConfirmContent
+              title="Perpanjang peminjaman?"
+              tone="primary"
+              confirmLabel="Ya, perpanjang"
+              cancelLabel="Batal"
+              onConfirm={async () => {
+                try {
+                  await actions.renew.mutateAsync(loan.id);
+                } catch {
+                  // The toast already carries the server message.
+                }
+              }}
+              description={
+                <>
+                  Jatuh tempo <strong>{loan.book.title}</strong> dimundurkan satu masa pinjam.
+                  Ditolak sistem bila ada anggota lain yang mengantre judul ini.
+                </>
+              }
+            >
+              <p className="text-xs text-muted-foreground">
+                Sudah diperpanjang {formatNumber(loan.renewCount)} dari {formatNumber(maxRenewals)}x
+              </p>
+            </ConfirmContent>
+          </ConfirmDialog>
+        ) : null}
+
         <ReturnDialog loan={loan} actions={actions} />
       </div>
     );
@@ -705,11 +913,24 @@ function ReturnDialog({ loan, actions }: { loan: Loan; actions: LoanMutations })
   const [note, setNote] = React.useState('');
   const [error, setError] = React.useState<string | undefined>(undefined);
   const confirm = actions.confirmReturn;
+  const settings = useSettings();
   const conditionId = `return-condition-${loan.id}`;
   const noteId = `return-note-${loan.id}`;
 
   const noteRequired = condition !== 'good';
   const current = CONDITIONS.find((c) => c.value === condition) ?? CONDITIONS[0];
+
+  const settingNumber = (key: string, fallback: number) => {
+    const raw = settings.data?.find((s) => s.key === key)?.value;
+    const parsed = Number.parseInt(raw ?? '', 10);
+    return Number.isFinite(parsed) ? parsed : fallback;
+  };
+
+  const lateDays = loan.daysLate ?? 0;
+  const lateFee = lateDays > 0 ? lateDays * settingNumber('late_fee_per_day', 1000) : 0;
+  const damagedFee = condition === 'damaged' ? settingNumber('damaged_fee', 5000) : 0;
+  const lostFee = condition === 'lost' ? settingNumber('lost_fee', 50000) : 0;
+  const estimated = lateFee + damagedFee + lostFee;
 
   const handleOpenChange = (next: boolean) => {
     setOpen(next);
@@ -814,11 +1035,25 @@ function ReturnDialog({ loan, actions }: { loan: Loan; actions: LoanMutations })
             />
           </Field>
 
-          {loan.daysLate !== null && loan.daysLate > 0 ? (
-            <p className="rounded-lg border border-warning/25 bg-warning-soft px-3 py-2 text-xs text-warning">
-              Buku tercatat terlambat {formatNumber(loan.daysLate)} hari. Denda yang dihitung
-              sistem: {formatRupiah(loan.lateFee ?? 0)}.
-            </p>
+          {estimated > 0 ? (
+            <div className="rounded-lg border border-warning/25 bg-warning-soft px-3 py-2.5">
+              <p className="text-xs font-semibold text-warning">
+                Perkiraan denda: {formatRupiah(estimated)}
+              </p>
+              <ul className="mt-1 space-y-0.5 text-2xs text-warning/90">
+                {lateFee > 0 ? (
+                  <li>
+                    Keterlambatan {formatNumber(lateDays)} hari ×{' '}
+                    {formatRupiah(settingNumber('late_fee_per_day', 1000))} = {formatRupiah(lateFee)}
+                  </li>
+                ) : null}
+                {damagedFee > 0 ? <li>Kerusakan: {formatRupiah(damagedFee)}</li> : null}
+                {lostFee > 0 ? <li>Kehilangan: {formatRupiah(lostFee)}</li> : null}
+              </ul>
+              <p className="mt-1 text-2xs text-warning/80">
+                Jumlah final dihitung server saat pengembalian disimpan.
+              </p>
+            </div>
           ) : null}
 
           <button type="submit" className="sr-only">

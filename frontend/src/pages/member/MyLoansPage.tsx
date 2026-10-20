@@ -93,7 +93,13 @@ function useLoanMutations() {
     invalidate: INVALIDATE,
   });
 
-  return { cancel, requestReturn };
+  const renew = useApiMutation<number, Loan>({
+    mutationFn: async (id) => (await api.post<Loan>(`/loans/${id}/renew`)).data,
+    successMessage: (loan) => `Peminjaman diperpanjang. Jatuh tempo baru: ${formatDate(loan.dueAt)}.`,
+    invalidate: INVALIDATE,
+  });
+
+  return { cancel, requestReturn, renew };
 }
 
 type LoanMutations = ReturnType<typeof useLoanMutations>;
@@ -125,6 +131,7 @@ export default function MyLoansPage() {
 
   const hasFilters = status !== 'aktif';
   const allowSelfReturn = overview.data?.allowSelfReturn ?? false;
+  const maxRenewals = overview.data?.maxRenewals ?? 0;
   const overdueCount = all.filter((loan) => loan.displayStatus === 'overdue').length;
   const activeLabel = FILTERS.find((f) => f.value === status)?.label ?? 'Semua aktif';
 
@@ -282,7 +289,12 @@ export default function MyLoansPage() {
             >
               {paged.items.map((loan) => (
                 <motion.li key={loan.id} variants={cardVariants}>
-                  <ActiveLoanCard loan={loan} allowSelfReturn={allowSelfReturn} actions={actions} />
+                  <ActiveLoanCard
+                    loan={loan}
+                    allowSelfReturn={allowSelfReturn}
+                    maxRenewals={maxRenewals}
+                    actions={actions}
+                  />
                 </motion.li>
               ))}
             </motion.ul>
@@ -312,10 +324,12 @@ export default function MyLoansPage() {
 function ActiveLoanCard({
   loan,
   allowSelfReturn,
+  maxRenewals,
   actions,
 }: {
   loan: Loan;
   allowSelfReturn: boolean;
+  maxRenewals: number;
   actions: LoanMutations;
 }) {
   const overdue = loan.displayStatus === 'overdue';
@@ -380,7 +394,12 @@ function ActiveLoanCard({
       </div>
 
       <div className="shrink-0 lg:w-64 lg:text-right">
-        <LoanActions loan={loan} allowSelfReturn={allowSelfReturn} actions={actions} />
+        <LoanActions
+          loan={loan}
+          allowSelfReturn={allowSelfReturn}
+          maxRenewals={maxRenewals}
+          actions={actions}
+        />
       </div>
     </article>
   );
@@ -389,12 +408,16 @@ function ActiveLoanCard({
 function LoanActions({
   loan,
   allowSelfReturn,
+  maxRenewals,
   actions,
 }: {
   loan: Loan;
   allowSelfReturn: boolean;
+  maxRenewals: number;
   actions: LoanMutations;
 }) {
+  const overdue = loan.displayStatus === 'overdue';
+
   if (loan.status === 'pending') {
     return (
       <div className="flex flex-wrap items-center gap-2 lg:justify-end">
@@ -432,61 +455,130 @@ function LoanActions({
   }
 
   if (loan.status === 'approved') {
+    const expired = loan.displayStatus === 'pickup_expired';
+
     return (
-      <p className="flex items-center justify-end gap-2 text-xs leading-relaxed text-muted-foreground">
-        <Handshake className="size-3.5 shrink-0 text-primary" aria-hidden />
-        <span>
-          <span className="font-medium text-foreground">Tersedia di loket.</span> Silakan ambil di
-          meja peminjaman pada jam layanan.
-        </span>
-      </p>
+      <div className="flex flex-col gap-1.5 lg:items-end">
+        <p
+          className={
+            expired
+              ? 'flex items-center justify-end gap-2 text-xs leading-relaxed text-destructive'
+              : 'flex items-center justify-end gap-2 text-xs leading-relaxed text-muted-foreground'
+          }
+        >
+          <Handshake
+            className={expired ? 'size-3.5 shrink-0' : 'size-3.5 shrink-0 text-primary'}
+            aria-hidden
+          />
+          <span>
+            {expired ? (
+              <>
+                <span className="font-medium">Batas pengambilan terlewat.</span> Hubungi petugas —
+                buku mungkin sudah dialihkan ke antrean berikutnya.
+              </>
+            ) : (
+              <>
+                <span className="font-medium text-foreground">Tersedia di loket.</span> Silakan
+                ambil di meja peminjaman pada jam layanan.
+              </>
+            )}
+          </span>
+        </p>
+        {loan.pickupDeadline && !expired ? (
+          <p className="text-2xs text-muted-foreground">
+            Ambil sebelum {formatDate(loan.pickupDeadline)} ({relativeDays(loan.pickupDeadline)})
+          </p>
+        ) : null}
+      </div>
     );
   }
 
   if (loan.status === 'borrowed') {
-    if (!allowSelfReturn) {
-      return (
-        <p className="flex items-center justify-end gap-2 text-xs leading-relaxed text-muted-foreground">
-          <Info className="size-3.5 shrink-0" aria-hidden />
-          <span>
-            Pengembalian mandiri dinonaktifkan. Serahkan buku ini kepada petugas perpustakaan di
-            loket.
-          </span>
-        </p>
-      );
-    }
+    // Renewal is only offered when it can actually succeed: not late, cap not
+    // reached, and the feature is not switched off by the librarian.
+    const canRenew = !overdue && maxRenewals > 0 && loan.renewCount < maxRenewals;
 
     return (
-      <ConfirmDialog>
-        <ConfirmTrigger asChild>
-          <Button size="sm" variant="primary" disabled={actions.requestReturn.isPending}>
-            <PackageCheck className="size-3.5" aria-hidden />
-            Ajukan Pengembalian
-          </Button>
-        </ConfirmTrigger>
-        <ConfirmContent
-          title="Ajukan pengembalian buku?"
-          tone="primary"
-          confirmLabel="Ya, ajukan"
-          cancelLabel="Batal"
-          onConfirm={async () => {
-            try {
-              await actions.requestReturn.mutateAsync(loan.id);
-            } catch {
-              // The toast already carries the server message.
-            }
-          }}
-          description={
-            <>
-              Buku <strong>{loan.book.title}</strong> akan ditandai sebagai permintaan
-              pengembalian. Petugas tetap harus memverifikasi buku secara fisik sebelum transaksi
-              ditutup.
-            </>
-          }
-        >
-          <p className="font-mono text-xs text-muted-foreground">Kode: {loan.loanCode}</p>
-        </ConfirmContent>
-      </ConfirmDialog>
+      <div className="flex flex-col gap-2 lg:items-end">
+        {!overdue && loan.renewCount > 0 ? (
+          <p className="text-2xs text-muted-foreground">
+            Sudah diperpanjang {formatNumber(loan.renewCount)}x
+          </p>
+        ) : null}
+
+        <div className="flex flex-wrap items-center gap-2 lg:justify-end">
+          {canRenew ? (
+            <ConfirmDialog>
+              <ConfirmTrigger asChild>
+                <Button size="sm" variant="outline" disabled={actions.renew.isPending}>
+                  <CalendarDays className="size-3.5" aria-hidden />
+                  Perpanjang
+                </Button>
+              </ConfirmTrigger>
+              <ConfirmContent
+                title="Perpanjang peminjaman?"
+                tone="primary"
+                confirmLabel="Ya, perpanjang"
+                cancelLabel="Batal"
+                onConfirm={async () => {
+                  try {
+                    await actions.renew.mutateAsync(loan.id);
+                  } catch {
+                    // The toast already carries the server message.
+                  }
+                }}
+                description={
+                  <>
+                    Jatuh tempo <strong>{loan.book.title}</strong> akan dimundurkan satu masa
+                    pinjam dari tanggal jatuh tempo saat ini. Perpanjangan tidak tersedia bila ada
+                    anggota lain yang mengantre buku ini.
+                  </>
+                }
+              >
+                <p className="font-mono text-xs text-muted-foreground">Kode: {loan.loanCode}</p>
+              </ConfirmContent>
+            </ConfirmDialog>
+          ) : null}
+
+          {!allowSelfReturn ? (
+            <p className="flex items-center gap-2 text-xs leading-relaxed text-muted-foreground lg:justify-end">
+              <Info className="size-3.5 shrink-0" aria-hidden />
+              <span>Pengembalian mandiri dinonaktifkan. Serahkan buku ke petugas di loket.</span>
+            </p>
+          ) : (
+            <ConfirmDialog>
+              <ConfirmTrigger asChild>
+                <Button size="sm" variant="primary" disabled={actions.requestReturn.isPending}>
+                  <PackageCheck className="size-3.5" aria-hidden />
+                  Ajukan Pengembalian
+                </Button>
+              </ConfirmTrigger>
+              <ConfirmContent
+                title="Ajukan pengembalian buku?"
+                tone="primary"
+                confirmLabel="Ya, ajukan"
+                cancelLabel="Batal"
+                onConfirm={async () => {
+                  try {
+                    await actions.requestReturn.mutateAsync(loan.id);
+                  } catch {
+                    // The toast already carries the server message.
+                  }
+                }}
+                description={
+                  <>
+                    Buku <strong>{loan.book.title}</strong> akan ditandai sebagai permintaan
+                    pengembalian. Petugas tetap harus memverifikasi buku secara fisik sebelum
+                    transaksi ditutup.
+                  </>
+                }
+              >
+                <p className="font-mono text-xs text-muted-foreground">Kode: {loan.loanCode}</p>
+              </ConfirmContent>
+            </ConfirmDialog>
+          )}
+        </div>
+      </div>
     );
   }
 

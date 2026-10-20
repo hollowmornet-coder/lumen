@@ -10,7 +10,18 @@ export const settingsUpdateSchema = z
     require_approval: boolish,
     allow_self_return: boolish,
     late_fee_per_day: z.coerce.number().int().min(0).max(100_000),
+    max_renewals: z.coerce.number().int().min(0, 'Tidak boleh negatif.').max(5, 'Maksimal 5 kali.'),
+    pickup_window_days: z.coerce.number().int().min(1, 'Minimal 1 hari.').max(30, 'Maksimal 30 hari.'),
+    fine_block_borrow: boolish,
+    damaged_fee: z.coerce.number().int().min(0).max(1_000_000),
+    lost_fee: z.coerce.number().int().min(0).max(1_000_000),
+    reservation_hold_days: z.coerce.number().int().min(1, 'Minimal 1 hari.').max(30, 'Maksimal 30 hari.'),
+    due_date_skip_holidays: boolish,
+    max_reservations_per_user: z.coerce.number().int().min(1, 'Minimal 1 antrean.').max(20, 'Maksimal 20 antrean.'),
+    review_requires_loan: boolish,
+    visit_tracking_enabled: boolish,
   })
+  .partial()
   .refine((data) => Object.keys(data).length > 0, {
     message: 'Tidak ada pengaturan yang dikirim.',
   });

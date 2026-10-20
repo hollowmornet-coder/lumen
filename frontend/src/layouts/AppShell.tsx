@@ -1,28 +1,38 @@
-import * as React from 'react';
+﻿import * as React from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { AnimatePresence, motion } from 'framer-motion';
 import {
-  Bell,
   BookMarked,
   BookOpen,
+  CalendarDays,
   ChevronLeft,
+  ClipboardCheck,
   ClipboardList,
+  DoorOpen,
   FileSpreadsheet,
+  HandCoins,
+  Heart,
   LayoutDashboard,
   Library,
   LogOut,
+  Megaphone,
   Menu,
+  Moon,
+  ScanLine,
   Search,
   Settings,
   ShieldCheck,
+  Sun,
   Users,
   X,
 } from 'lucide-react';
 import { useAuth } from '@/features/auth/AuthContext';
-import { api } from '@/lib/api';
+import { ForcePasswordChange } from '@/features/auth/ForcePasswordChange';
+import { useTheme } from '@/providers/ThemeProvider';
 import { cn, initials } from '@/lib/utils';
 import { collapseVariants, EASE_OUT, sidebarVariants, springSoft } from '@/lib/motion';
 import { Button } from '@/components/ui/button';
+import { NotificationCenter } from '@/components/layout/NotificationCenter';
 
 interface NavItem {
   to: string;
@@ -34,8 +44,14 @@ interface NavItem {
 const ADMIN_NAV: NavItem[] = [
   { to: '/admin', label: 'Dasbor', icon: LayoutDashboard, end: true },
   { to: '/admin/transaksi', label: 'Transaksi', icon: ClipboardList },
+  { to: '/admin/sirkulasi', label: 'Meja Sirkulasi', icon: ScanLine },
+  { to: '/admin/denda', label: 'Denda', icon: HandCoins },
   { to: '/admin/buku', label: 'Kelola Buku', icon: BookOpen },
   { to: '/admin/anggota', label: 'Kelola Anggota', icon: Users },
+  { to: '/admin/opname', label: 'Stok Opname', icon: ClipboardCheck },
+  { to: '/admin/kunjungan', label: 'Kunjungan', icon: DoorOpen },
+  { to: '/admin/pengumuman', label: 'Pengumuman', icon: Megaphone },
+  { to: '/admin/hari-libur', label: 'Hari Libur', icon: CalendarDays },
   { to: '/katalog/seri', label: 'Katalog Seri', icon: Library },
   { to: '/admin/laporan', label: 'Laporan', icon: FileSpreadsheet },
   { to: '/admin/aktivitas', label: 'Aktivitas', icon: ShieldCheck },
@@ -47,6 +63,9 @@ const MEMBER_NAV: NavItem[] = [
   { to: '/katalog', label: 'Katalog Buku', icon: BookMarked },
   { to: '/katalog/seri', label: 'Katalog Seri', icon: Library },
   { to: '/perpustakaan/pinjaman', label: 'Pinjaman Saya', icon: ClipboardList },
+  { to: '/perpustakaan/reservasi', label: 'Antrean Saya', icon: Library },
+  { to: '/perpustakaan/daftar-keinginan', label: 'Daftar Keinginan', icon: Heart },
+  { to: '/perpustakaan/denda', label: 'Denda Saya', icon: HandCoins },
   { to: '/perpustakaan/riwayat', label: 'Riwayat', icon: BookOpen },
   { to: '/perpustakaan/profil', label: 'Profil', icon: Users },
 ];
@@ -138,7 +157,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const [collapsed, setCollapsed] = React.useState(false);
   const [mobileOpen, setMobileOpen] = React.useState(false);
   const [profileOpen, setProfileOpen] = React.useState(false);
-  const [notificationsOpen, setNotificationsOpen] = React.useState(false);
   const profileRef = React.useRef<HTMLDivElement>(null);
 
   // Collapse automatically on medium screens, expand on large ones.
@@ -177,6 +195,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="min-h-dvh bg-background">
+      {/* Bulk-imported accounts must choose their own password before they can
+          use anything; the gate renders above the shell. */}
+      <ForcePasswordChange />
+
       {/* Static ambient wash - gives the glass layers something to refract.
           Fixed and non-animated so it never triggers a full-screen repaint. */}
       <div className="lumen-canvas" aria-hidden />
@@ -276,11 +298,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           <GlobalSearch />
 
           <div className="ml-auto flex items-center gap-1.5">
-            <NotificationBell
-              open={notificationsOpen}
-              onOpenChange={setNotificationsOpen}
-              isAdmin={isAdmin}
-            />
+            <ThemeToggle />
+            <NotificationCenter />
 
             <div className="relative" ref={profileRef}>
               <button
@@ -366,6 +385,25 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
 /* ------------------------------------------------------------------ */
 
+function ThemeToggle() {
+  const { theme, toggle } = useTheme();
+  const dark = theme === 'dark';
+
+  return (
+    <Button
+      variant="ghost"
+      size="icon"
+      onClick={toggle}
+      aria-label={dark ? 'Gunakan tema terang' : 'Gunakan tema gelap'}
+      title={dark ? 'Tema terang' : 'Tema gelap'}
+    >
+      {dark ? <Sun className="size-4" aria-hidden /> : <Moon className="size-4" aria-hidden />}
+    </Button>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+
 function GlobalSearch() {
   const navigate = useNavigate();
   const [term, setTerm] = React.useState('');
@@ -408,163 +446,6 @@ function GlobalSearch() {
       </kbd>
     </form>
   );
-}
-
-function NotificationBell({
-  open,
-  onOpenChange,
-  isAdmin,
-}: {
-  open: boolean;
-  onOpenChange: (v: boolean) => void;
-  isAdmin: boolean;
-}) {
-  const ref = React.useRef<HTMLDivElement>(null);
-  const data = usePendingCount(isAdmin);
-
-  React.useEffect(() => {
-    if (!open) return;
-    const onClick = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) onOpenChange(false);
-    };
-    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onOpenChange(false);
-    document.addEventListener('mousedown', onClick);
-    document.addEventListener('keydown', onKey);
-    return () => {
-      document.removeEventListener('mousedown', onClick);
-      document.removeEventListener('keydown', onKey);
-    };
-  }, [open, onOpenChange]);
-
-  return (
-    <div className="relative" ref={ref}>
-      <button
-        type="button"
-        onClick={() => onOpenChange(!open)}
-        aria-expanded={open}
-        aria-label={data && data.count > 0 ? `Notifikasi, ${data.count} baru` : 'Notifikasi'}
-        className="relative rounded-lg p-2 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-      >
-        <Bell className="size-4" aria-hidden />
-        {data && data.count > 0 ? (
-          <motion.span
-            key={data.count}
-            initial={{ scale: 0.5, opacity: 0 }}
-            animate={{ scale: 1, opacity: 1 }}
-            transition={springSoft}
-            className="absolute -right-0.5 -top-0.5 flex size-4 items-center justify-center rounded-full bg-destructive text-[10px] font-semibold text-white"
-          >
-            {data.count > 9 ? '9+' : data.count}
-          </motion.span>
-        ) : null}
-      </button>
-
-      <AnimatePresence>
-        {open ? (
-          <motion.div
-            initial={{ opacity: 0, scale: 0.96, y: -4 }}
-            animate={{ opacity: 1, scale: 1, y: 0 }}
-            exit={{ opacity: 0, scale: 0.98, y: -2 }}
-            transition={{ duration: 0.16, ease: EASE_OUT }}
-            className="absolute right-0 top-full z-50 mt-2 w-72 origin-top-right overflow-hidden rounded-xl border border-border bg-card shadow-lift"
-          >
-            <div className="border-b border-border px-4 py-2.5">
-              <p className="text-sm font-medium">Notifikasi</p>
-            </div>
-            <div className="p-2">
-              {!data || data.count === 0 ? (
-                <p className="px-2 py-6 text-center text-sm text-muted-foreground">
-                  Tidak ada hal yang perlu ditindaklanjuti.
-                </p>
-              ) : (
-                <ul className="space-y-1">
-                  {(data?.items ?? []).map((n) => (
-                    <li
-                      key={n.key}
-                      className="flex items-center justify-between gap-3 rounded-lg px-2.5 py-2 text-sm"
-                    >
-                      <span className="text-foreground">{n.label}</span>
-                      <span className="rounded-full bg-primary/10 px-2 py-0.5 text-xs font-semibold text-primary tabular-nums">
-                        {n.value}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-          </motion.div>
-        ) : null}
-      </AnimatePresence>
-    </div>
-  );
-}
-
-/** Small hook so the bell always reflects real backend counters. */
-function usePendingCount(isAdmin: boolean) {
-  const { user } = useAuth();
-  const enabled = Boolean(user);
-  const [state, setState] = React.useState<{ count: number; items: Array<{ key: string; label: string; value: number }> } | null>(null);
-
-  React.useEffect(() => {
-    if (!enabled) return;
-    let cancelled = false;
-
-    const load = async () => {
-      try {
-        const items: Array<{ key: string; label: string; value: number }> = [];
-        let count = 0;
-
-        if (isAdmin) {
-          const res = await api.get<{
-            pendingApprovals: number;
-            returnRequests: number;
-            overdueLoans: number;
-          }>('/dashboard/admin/overview');
-          const d = res.data;
-          if (d.pendingApprovals > 0) {
-            items.push({ key: 'pending', label: 'Permohonan menunggu', value: d.pendingApprovals });
-          }
-          if (d.returnRequests > 0) {
-            items.push({ key: 'returns', label: 'Pengembalian masuk', value: d.returnRequests });
-          }
-          if (d.overdueLoans > 0) {
-            items.push({ key: 'overdue', label: 'Peminjaman terlambat', value: d.overdueLoans });
-          }
-        } else {
-          const res = await api.get<{
-            pendingRequests: number;
-            returnRequested: number;
-            overdueLoans: number;
-          }>('/dashboard/member/overview');
-          const d = res.data;
-          if (d.pendingRequests > 0) {
-            items.push({ key: 'pending', label: 'Permohonan diproses', value: d.pendingRequests });
-          }
-          if (d.returnRequested > 0) {
-            items.push({ key: 'returns', label: 'Menunggu verifikasi', value: d.returnRequested });
-          }
-          if (d.overdueLoans > 0) {
-            items.push({ key: 'overdue', label: 'Peminjaman terlambat', value: d.overdueLoans });
-          }
-        }
-
-        count = items.reduce((sum, i) => sum + i.value, 0);
-        if (!cancelled) setState({ count, items });
-      } catch {
-        // Notifications are non-critical; a failure just shows an empty bell.
-        if (!cancelled) setState(null);
-      }
-    };
-
-    void load();
-    const timer = setInterval(load, 60_000);
-    return () => {
-      cancelled = true;
-      clearInterval(timer);
-    };
-  }, [enabled, isAdmin]);
-
-  return state;
 }
 
 export { collapseVariants };

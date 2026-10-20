@@ -44,6 +44,8 @@ const LOAN_STATUS: Record<string, { label: string; tone: LoanTone }> = {
   returned: { label: 'Selesai', tone: 'success' },
   cancelled: { label: 'Dibatalkan', tone: 'neutral' },
   overdue: { label: 'Terlambat', tone: 'danger' },
+  // Derived: approved but the pickup window has passed.
+  pickup_expired: { label: 'Lewat Batas Ambil', tone: 'warning' },
 };
 
 export function LoanStatusBadge({ status }: { status: string }) {
@@ -57,6 +59,41 @@ export function LoanStatusBadge({ status }: { status: string }) {
       {meta.label}
     </Badge>
   );
+}
+
+const FINE_STATUS: Record<string, { label: string; tone: LoanTone }> = {
+  unpaid: { label: 'Belum Lunas', tone: 'danger' },
+  paid: { label: 'Lunas', tone: 'success' },
+  waived: { label: 'Dibebaskan', tone: 'neutral' },
+};
+
+export function FineStatusBadge({ status }: { status: string }) {
+  const meta = FINE_STATUS[status] ?? { label: status, tone: 'neutral' as LoanTone };
+  return <Badge tone={meta.tone}>{meta.label}</Badge>;
+}
+
+const FINE_KIND: Record<string, { label: string; tone: LoanTone }> = {
+  late: { label: 'Keterlambatan', tone: 'warning' },
+  damaged: { label: 'Kerusakan', tone: 'violet' },
+  lost: { label: 'Kehilangan', tone: 'danger' },
+};
+
+export function FineKindBadge({ kind }: { kind: string }) {
+  const meta = FINE_KIND[kind] ?? { label: kind, tone: 'neutral' as LoanTone };
+  return <Badge tone={meta.tone}>{meta.label}</Badge>;
+}
+
+const RESERVATION_STATUS: Record<string, { label: string; tone: LoanTone }> = {
+  waiting: { label: 'Mengantre', tone: 'warning' },
+  ready: { label: 'Siap Diambil', tone: 'success' },
+  fulfilled: { label: 'Terpenuhi', tone: 'info' },
+  expired: { label: 'Kedaluwarsa', tone: 'neutral' },
+  cancelled: { label: 'Dibatalkan', tone: 'neutral' },
+};
+
+export function ReservationStatusBadge({ status }: { status: string }) {
+  const meta = RESERVATION_STATUS[status] ?? { label: status, tone: 'neutral' as LoanTone };
+  return <Badge tone={meta.tone}>{meta.label}</Badge>;
 }
 
 export function BookStatusBadge({ status }: { status: string }) {

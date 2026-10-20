@@ -3,11 +3,15 @@ import { query, queryOne, type RowDataPacket } from '../../config/db';
 const OVERDUE_EXPR =
   "(l.status IN ('borrowed','return_requested') AND l.due_at IS NOT NULL AND l.due_at < NOW())";
 
+const PICKUP_EXPIRED_EXPR =
+  "(l.status = 'approved' AND l.pickup_deadline IS NOT NULL AND l.pickup_deadline < NOW())";
+
 export interface AdminOverview {
   totalTitles: number;
   totalCopies: number;
   availableCopies: number;
   borrowedCopies: number;
+  damagedCopies: number;
   activeMembers: number;
   totalMembers: number;
   pendingApprovals: number;
@@ -17,6 +21,10 @@ export interface AdminOverview {
   totalLoans: number;
   returnedThisMonth: number;
   categories: number;
+  pickupExpired: number;
+  unpaidFinesTotal: number;
+  unpaidFinesCount: number;
+  queueWaiting: number;
 }
 
 /**
@@ -29,7 +37,8 @@ export async function getAdminOverview(): Promise<AdminOverview> {
       `SELECT COUNT(*) AS total_titles,
               COALESCE(SUM(total_copies), 0) AS total_copies,
               COALESCE(SUM(available_copies), 0) AS available_copies,
-              COALESCE(SUM(total_copies - available_copies), 0) AS borrowed_copies
+              COALESCE(SUM(damaged_copies), 0) AS damaged_copies,
+              COALESCE(SUM(total_copies - available_copies - damaged_copies), 0) AS borrowed_copies
          FROM books WHERE status = 'active'`,
     ),
     queryOne<RowDataPacket & Record<string, number>>(
@@ -43,14 +52,23 @@ export async function getAdminOverview(): Promise<AdminOverview> {
               SUM(l.status = 'return_requested') AS return_requests,
               SUM(l.status IN ('approved','borrowed','return_requested')) AS active_loans,
               SUM(l.status = 'returned' AND l.returned_at >= DATE_FORMAT(NOW(), '%Y-%m-01')) AS returned_this_month,
-              SUM(${OVERDUE_EXPR}) AS overdue_loans
+              SUM(${OVERDUE_EXPR}) AS overdue_loans,
+              SUM(${PICKUP_EXPIRED_EXPR}) AS pickup_expired
          FROM loans l`,
     ),
   ]);
 
-  const catRow = await queryOne<RowDataPacket & { total: number }>(
-    "SELECT COUNT(*) AS total FROM categories",
-  );
+  const [catRow, fineRow, queueRow] = await Promise.all([
+    queryOne<RowDataPacket & { total: number }>("SELECT COUNT(*) AS total FROM categories"),
+    queryOne<RowDataPacket & Record<string, number>>(
+      `SELECT COALESCE(SUM(CASE WHEN status = 'unpaid' THEN amount ELSE 0 END), 0) AS unpaid_total,
+              COALESCE(SUM(status = 'unpaid'), 0) AS unpaid_count
+         FROM fines`,
+    ),
+    queryOne<RowDataPacket & { n: number }>(
+      "SELECT COUNT(*) AS n FROM reservations WHERE status IN ('waiting','ready')",
+    ),
+  ]);
 
   const books: Record<string, number> = bookRow ?? {};
   const users: Record<string, number> = userRow ?? {};
@@ -61,6 +79,7 @@ export async function getAdminOverview(): Promise<AdminOverview> {
     totalCopies: Number(books.total_copies ?? 0),
     availableCopies: Number(books.available_copies ?? 0),
     borrowedCopies: Number(books.borrowed_copies ?? 0),
+    damagedCopies: Number(books.damaged_copies ?? 0),
     activeMembers: Number(users.active_members ?? 0),
     totalMembers: Number(users.total_members ?? 0),
     categories: Number(catRow?.total ?? 0),
@@ -70,6 +89,10 @@ export async function getAdminOverview(): Promise<AdminOverview> {
     activeLoans: Number(loans.active_loans ?? 0),
     totalLoans: Number(loans.total_loans ?? 0),
     returnedThisMonth: Number(loans.returned_this_month ?? 0),
+    pickupExpired: Number(loans.pickup_expired ?? 0),
+    unpaidFinesTotal: Number(fineRow?.unpaid_total ?? 0),
+    unpaidFinesCount: Number(fineRow?.unpaid_count ?? 0),
+    queueWaiting: Number(queueRow?.n ?? 0),
   };
 }
 
@@ -274,6 +297,12 @@ export interface MemberOverview {
   returnRequested: number;
   maxLoanPerUser: number;
   remainingQuota: number;
+  allowSelfReturn: boolean;
+  requireApproval: boolean;
+  unpaidFines: number;
+  unpaidFineCount: number;
+  waitingReservations: number;
+  readyReservations: number;
 }
 
 export async function getMemberOverview(
@@ -291,6 +320,21 @@ export async function getMemberOverview(
     [userId],
   );
 
+  const [fineRow, resRow] = await Promise.all([
+    queryOne<RowDataPacket & Record<string, number>>(
+      `SELECT COALESCE(SUM(CASE WHEN status = 'unpaid' THEN amount ELSE 0 END), 0) AS unpaid_total,
+              COALESCE(SUM(status = 'unpaid'), 0) AS unpaid_count
+         FROM fines WHERE user_id = ?`,
+      [userId],
+    ),
+    queryOne<RowDataPacket & Record<string, number>>(
+      `SELECT SUM(status = 'waiting') AS waiting,
+              SUM(status = 'ready') AS ready
+         FROM reservations WHERE user_id = ?`,
+      [userId],
+    ),
+  ]);
+
   const active = Number(row?.active_loans ?? 0);
   return {
     activeLoans: active,
@@ -300,5 +344,152 @@ export async function getMemberOverview(
     returnRequested: Number(row?.return_requested ?? 0),
     maxLoanPerUser,
     remainingQuota: Math.max(0, maxLoanPerUser - active),
+    allowSelfReturn: false,
+    requireApproval: false,
+    unpaidFines: Number(fineRow?.unpaid_total ?? 0),
+    unpaidFineCount: Number(fineRow?.unpaid_count ?? 0),
+    waitingReservations: Number(resRow?.waiting ?? 0),
+    readyReservations: Number(resRow?.ready ?? 0),
+  };
+}
+
+/* ------------------------------------------------------------------
+   Reports
+   ------------------------------------------------------------------ */
+
+export interface NeverBorrowedBook {
+  id: number;
+  title: string;
+  author: string;
+  categoryName: string | null;
+  totalCopies: number;
+  availableCopies: number;
+  createdAt: string;
+}
+
+/** Titles that have never left the shelf - dead stock worth reconsidering. */
+export async function getNeverBorrowedBooks(limit = 20): Promise<NeverBorrowedBook[]> {
+  const rows = await query<RowDataPacket & Record<string, any>>(
+    `SELECT b.id, b.title, b.author, c.name AS categoryName,
+            b.total_copies, b.available_copies, b.created_at
+       FROM books b
+       LEFT JOIN categories c ON c.id = b.category_id
+      WHERE b.status = 'active'
+        AND NOT EXISTS (SELECT 1 FROM loans l WHERE l.book_id = b.id)
+      ORDER BY b.created_at ASC
+      LIMIT ?`,
+    [limit],
+  );
+
+  return rows.map((r) => ({
+    id: Number(r.id),
+    title: r.title,
+    author: r.author,
+    categoryName: r.categoryName ?? null,
+    totalCopies: Number(r.total_copies),
+    availableCopies: Number(r.available_copies),
+    createdAt: r.created_at,
+  }));
+}
+
+export interface LateMember {
+  id: number;
+  fullName: string;
+  memberCode: string | null;
+  overdueCount: number;
+  totalLateDays: number;
+  unpaidFines: number;
+}
+
+/** Members who are late most often, with how much they still owe. */
+export async function getLateMembers(limit = 20): Promise<LateMember[]> {
+  const rows = await query<RowDataPacket & Record<string, any>>(
+    `SELECT u.id, u.full_name AS fullName, u.member_code AS memberCode,
+            COUNT(l.id) AS overdueCount,
+            COALESCE(SUM(GREATEST(DATEDIFF(COALESCE(l.returned_at, NOW()), l.due_at), 0)), 0) AS totalLateDays,
+            (SELECT COALESCE(SUM(f.amount), 0) FROM fines f
+              WHERE f.user_id = u.id AND f.status = 'unpaid') AS unpaidFines
+       FROM users u
+       JOIN loans l ON l.user_id = u.id
+      WHERE u.role = 'user'
+        AND l.due_at IS NOT NULL
+        AND l.status IN ('borrowed','return_requested','returned')
+        AND DATEDIFF(COALESCE(l.returned_at, NOW()), l.due_at) > 0
+      GROUP BY u.id, u.full_name, u.member_code
+      ORDER BY overdueCount DESC, totalLateDays DESC
+      LIMIT ?`,
+    [limit],
+  );
+
+  return rows.map((r) => ({
+    id: Number(r.id),
+    fullName: r.fullName,
+    memberCode: r.memberCode ?? null,
+    overdueCount: Number(r.overdueCount ?? 0),
+    totalLateDays: Number(r.totalLateDays ?? 0),
+    unpaidFines: Number(r.unpaidFines ?? 0),
+  }));
+}
+
+export interface FineReport {
+  byKind: Array<{ kind: string; count: number; total: number; unpaid: number }>;
+  byMonth: Array<{ period: string; collected: number; charged: number }>;
+  totals: { charged: number; collected: number; outstanding: number; waived: number };
+}
+
+/** Money view: what was charged, what came in, what is still owed. */
+export async function getFineReport(from: string, to: string): Promise<FineReport> {
+  const [kindRows, monthRows, totalRow] = await Promise.all([
+    query<RowDataPacket & Record<string, any>>(
+      `SELECT kind,
+              COUNT(*) AS cnt,
+              COALESCE(SUM(amount), 0) AS total,
+              COALESCE(SUM(CASE WHEN status = 'unpaid' THEN amount ELSE 0 END), 0) AS unpaid
+         FROM fines
+        WHERE DATE(created_at) BETWEEN ? AND ?
+        GROUP BY kind
+        ORDER BY total DESC`,
+      [from, to],
+    ),
+    query<RowDataPacket & Record<string, any>>(
+      `SELECT DATE_FORMAT(created_at, '%Y-%m') AS period,
+              COALESCE(SUM(amount), 0) AS charged,
+              COALESCE(SUM(CASE WHEN status = 'paid' THEN amount ELSE 0 END), 0) AS collected
+         FROM fines
+        WHERE DATE(created_at) BETWEEN ? AND ?
+        GROUP BY period
+        ORDER BY period ASC`,
+      [from, to],
+    ),
+    queryOne<RowDataPacket & Record<string, number>>(
+      `SELECT
+         COALESCE(SUM(amount), 0) AS charged,
+         COALESCE(SUM(CASE WHEN status = 'paid' THEN amount ELSE 0 END), 0) AS collected,
+         COALESCE(SUM(CASE WHEN status = 'unpaid' THEN amount ELSE 0 END), 0) AS outstanding,
+         COALESCE(SUM(CASE WHEN status = 'waived' THEN amount ELSE 0 END), 0) AS waived
+       FROM fines
+       WHERE DATE(created_at) BETWEEN ? AND ?`,
+      [from, to],
+    ),
+  ]);
+
+  return {
+    byKind: kindRows.map((r) => ({
+      kind: r.kind,
+      count: Number(r.cnt ?? 0),
+      total: Number(r.total ?? 0),
+      unpaid: Number(r.unpaid ?? 0),
+    })),
+    byMonth: monthRows.map((r) => ({
+      period: r.period,
+      charged: Number(r.charged ?? 0),
+      collected: Number(r.collected ?? 0),
+    })),
+    totals: {
+      charged: Number(totalRow?.charged ?? 0),
+      collected: Number(totalRow?.collected ?? 0),
+      outstanding: Number(totalRow?.outstanding ?? 0),
+      waived: Number(totalRow?.waived ?? 0),
+    },
   };
 }

@@ -11,11 +11,14 @@ import {
   updateProfile,
   verifyCredentials,
 } from './auth.service';
+import { issueResetToken, resetPasswordWithToken } from './password-reset.service';
 import { toPublicUser } from './auth.types';
 import type {
   ChangePasswordInput,
   LoginInput,
   RegisterInput,
+  RequestResetInput,
+  ResetPasswordInput,
   UpdateProfileInput,
 } from './auth.schema';
 
@@ -141,4 +144,48 @@ export const changeMyPassword = asyncHandler(async (req: Request, res: Response)
   });
 
   res.json({ success: true, message: 'Kata sandi berhasil diperbarui.' });
+});
+
+/**
+ * Step 1 of self-service reset: ask for a token.
+ *
+ * The token is returned in the response body only because this deployment has
+ * no mail server. In a networked install the same call would send the token by
+ * email and return nothing but a confirmation.
+ */
+export const requestReset = asyncHandler(async (req: Request, res: Response) => {
+  const body = req.body as RequestResetInput;
+  const result = await issueResetToken(body.identifier);
+
+  await logActivity({
+    userId: result.user.id,
+    actorName: result.user.fullName,
+    action: 'password.reset_request',
+    entityType: 'auth',
+    entityId: result.user.id,
+    description: `Permintaan reset kata sandi untuk ${result.user.username}`,
+    ipAddress: req.ip ?? undefined,
+  });
+
+  res.json({
+    success: true,
+    data: { token: result.token, expiresAt: result.expiresAt },
+    message: `Token reset berlaku sampai ${result.expiresAt}. Serahkan token ini kepada pemilik akun.`,
+  });
+});
+
+/** Step 2: exchange the token for a new password. */
+export const resetPassword = asyncHandler(async (req: Request, res: Response) => {
+  const body = req.body as ResetPasswordInput;
+  await resetPasswordWithToken(body.token, body.newPassword);
+
+  await logActivity({
+    actorName: 'reset-token',
+    action: 'password.reset',
+    entityType: 'auth',
+    description: 'Kata sandi direset melalui token',
+    ipAddress: req.ip ?? undefined,
+  });
+
+  res.json({ success: true, message: 'Kata sandi berhasil direset. Silakan masuk dengan kata sandi baru.' });
 });

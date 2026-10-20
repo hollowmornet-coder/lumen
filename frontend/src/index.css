@@ -287,9 +287,128 @@
   }
 }
 
-/* Print: reports should come out clean. */
+/* =========================================================
+   Print
+   =========================================================
+
+   Reports and receipts are printed on the school's A4 printer, usually from
+   the browser. The sidebar, action buttons and the ambient background are
+   pure noise on paper, and the glass panels render as heavy grey blocks
+   because browsers do not composite `backdrop-filter`.
+
+   Everything here is additive: screens keep their layout, paper gets a flat
+   document. */
+
 @media print {
   .no-print {
     display: none !important;
   }
+
+  /* Chrome and Safari need this to honour the colours below. */
+  *,
+  *::before,
+  *::after {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  @page {
+    margin: 14mm;
+  }
+
+  html,
+  body {
+    background: #fff !important;
+    color: #111 !important;
+    font-size: 11pt;
+  }
+
+  /* Navigation chrome never belongs on paper. */
+  .lumen-canvas,
+  .grain,
+  nav,
+  aside,
+  header > .no-print {
+    display: none !important;
+  }
+
+  /* The sidebar is `position: fixed`, which otherwise leaves a blank column
+     and a clipped content area. */
+  main,
+  [role='main'] {
+    margin: 0 !important;
+    padding: 0 !important;
+    max-width: none !important;
+    width: 100% !important;
+  }
+
+  /* Flatten glass panels: no blur, no shadow, no translucent fills. */
+  .panel,
+  .glass,
+  [class*='backdrop-blur'] {
+    background: #fff !important;
+    border: 1px solid #d4d4d8 !important;
+    box-shadow: none !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    break-inside: avoid;
+  }
+
+  /* Tables: repeat the header on every page and keep rows intact. */
+  table {
+    width: 100% !important;
+    border-collapse: collapse !important;
+    font-size: 9.5pt;
+  }
+
+  thead {
+    display: table-header-group;
+  }
+
+  tr {
+    break-inside: avoid;
+  }
+
+  th,
+  td {
+    border-bottom: 1px solid #e4e4e7 !important;
+    padding: 4pt 6pt !important;
+  }
+
+  /* Long lists must not be clipped by their scroll container on paper. */
+  .overflow-x-auto,
+  .overflow-y-auto {
+    overflow: visible !important;
+    max-height: none !important;
+  }
+
+  /* Buttons become dead ink; badges keep their text but lose the pill fill. */
+  button:not([data-print-keep]),
+  [role='button'] {
+    display: none !important;
+  }
+
+  a[href]::after {
+    content: '';
+  }
+
+  h1,
+  h2,
+  h3 {
+    break-after: avoid;
+  }
+
+  /* Utility escape hatches for a specific report page. */
+  .print-only {
+    display: block !important;
+  }
+
+  .print-break-before {
+    break-before: page;
+  }
+}
+
+/* Hidden on screen, shown only on paper. */
+.print-only {
+  display: none;
 }

@@ -7,11 +7,25 @@ services:
     region: singapore
     healthCheckPath: /api/health
     envVars:
-      - key: DATABASE_URL
-        value: mysql://USER:PASS@HOST:4000/lumen_db?ssl=true
+      # Nama variabel HARUS sama dengan yang dibaca backend/src/config/env.ts.
+      # Backend tidak memahami DATABASE_URL, jadi komponennya dipecah satu per satu.
+      - key: DB_HOST
+        sync: false
+      - key: DB_PORT
+        value: 4000
+        # Port database, BUKAN port aplikasi. TiDB Cloud memakai 4000.
+        # Untuk MariaDB/MySQL biasa ganti menjadi 3306.
+      - key: DB_USER
+        sync: false
+      - key: DB_PASSWORD
+        sync: false
+      - key: DB_NAME
+        value: lumen_db
       - key: JWT_SECRET
         sync: false
-      - key: FRONTEND_ORIGIN
+      - key: CORS_ORIGIN
         value: https://${RENDER_EXTERNAL_HOSTNAME}
+      - key: NODE_ENV
+        value: production
       - key: PORT
         value: 4000

@@ -10,6 +10,7 @@ import {
   ClipboardList,
   Clock3,
   Library,
+  Megaphone,
   RefreshCw,
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
@@ -20,7 +21,7 @@ import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { HeadlineFigure, StatCard } from '@/components/ui/stat-card';
 import { EmptyState, ErrorState } from '@/components/ui/states';
-import { useCategories, useMemberOverview, useMyLoans } from '@/hooks/useApi';
+import { useCategories, useMemberOverview, useMyLoans, useAnnouncements } from '@/hooks/useApi';
 import { useAuth } from '@/features/auth/AuthContext';
 import { cn, formatDate, formatNumber, relativeDays } from '@/lib/utils';
 import { staggerContainer, staggerItem } from '@/lib/motion';
@@ -225,6 +226,9 @@ export default function MemberHomePage() {
           ) : null}
         </section>
 
+        {/* ---------- Announcements ---------- */}
+        <MemberAnnouncements />
+
         {/* ---------- Recent loans + quick actions ---------- */}
         <section className="grid gap-4 lg:grid-cols-3" aria-label="Pinjaman dan aksi cepat">
           <div className="panel overflow-hidden lg:col-span-2">
@@ -414,6 +418,50 @@ export default function MemberHomePage() {
         </section>
       </PageBody>
     </>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+
+/**
+ * Live announcements on the member home page.
+ *
+ * Only unexpired items are requested, and the section removes itself entirely
+ * when there is nothing to say — an empty "Pengumuman" box every day trains
+ * people to ignore the area where the important notice will one day appear.
+ */
+function MemberAnnouncements() {
+  const announcements = useAnnouncements({ activeOnly: 'true', pageSize: 3 });
+  const items = announcements.data?.items ?? [];
+
+  if (announcements.isLoading || items.length === 0) return null;
+
+  return (
+    <section aria-label="Pengumuman perpustakaan" className="space-y-2">
+      {items.map((a) => (
+        <article
+          key={a.id}
+          className={cn(
+            'panel flex items-start gap-3 p-4',
+            a.pinned && 'border-primary/35 bg-electric-soft/40',
+          )}
+        >
+          <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-electric-soft text-primary">
+            <Megaphone className="size-4" aria-hidden />
+          </span>
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <h2 className="font-display text-sm font-semibold">{a.title}</h2>
+              {a.pinned ? <Badge tone="info">Penting</Badge> : null}
+            </div>
+            <p className="mt-1 whitespace-pre-line text-sm text-muted-foreground">{a.body}</p>
+            <p className="mt-1.5 text-2xs text-muted-foreground">
+              {a.createdByName} · {formatDate(a.createdAt)}
+            </p>
+          </div>
+        </article>
+      ))}
+    </section>
   );
 }
 

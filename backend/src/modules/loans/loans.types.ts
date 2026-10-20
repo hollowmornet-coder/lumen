@@ -14,7 +14,7 @@ export type LoanStatus =
  * has passed. Storing it would require a scheduled job to keep flipping rows
  * and would drift whenever the server clock moved.
  */
-export type DisplayStatus = LoanStatus | 'overdue';
+export type DisplayStatus = LoanStatus | 'overdue' | 'pickup_expired';
 
 export const STORED_STATUSES: LoanStatus[] = [
   'pending',

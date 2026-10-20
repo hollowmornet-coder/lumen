@@ -8,7 +8,8 @@ import type { BookQuery, CreateBookInput, UpdateBookInput } from './books.schema
 const BOOK_COLUMNS = `
   b.id, b.isbn, b.title, b.author, b.publisher, b.publish_year, b.category_id,
   b.description, b.shelf_location, b.total_copies, b.available_copies,
-  b.cover_path, b.status, b.created_at, b.updated_at, c.name AS category_name
+  b.damaged_copies, b.cover_path, b.status, b.created_at, b.updated_at,
+  c.name AS category_name
 `;
 
 const BOOK_FROM = `
@@ -22,9 +23,16 @@ function buildFilters(q: BookQuery) {
   const args: unknown[] = [];
 
   if (q.search) {
-    where.push('(b.title LIKE ? OR b.author LIKE ? OR b.isbn LIKE ?)');
+    // Shelf location and category are included because that is how a librarian
+    // actually looks for a book: "where is the one on shelf NF-01?" Typing the
+    // shelf code and getting nothing back was the single most common complaint
+    // this query caused.
+    where.push(
+      `(b.title LIKE ? OR b.author LIKE ? OR b.isbn LIKE ?
+        OR b.publisher LIKE ? OR b.shelf_location LIKE ? OR c.name LIKE ?)`,
+    );
     const like = `%${escapeLike(q.search)}%`;
-    args.push(like, like, like);
+    args.push(like, like, like, like, like, like);
   }
   if (q.categoryId) {
     where.push('b.category_id = ?');

@@ -16,7 +16,7 @@ interface DuplicateRow extends RowDataPacket {
 export async function findAuthUserById(id: number): Promise<AuthUserRow | null> {
   return queryOne<AuthUserRow & RowDataPacket>(
     `SELECT id, username, email, password_hash, full_name, role, status,
-            class_name, phone, member_code, last_login_at
+            class_name, phone, member_code, last_login_at, must_change_password
        FROM users
       WHERE id = ?`,
     [id],
@@ -26,7 +26,7 @@ export async function findAuthUserById(id: number): Promise<AuthUserRow | null> 
 export async function findAuthUserByIdentifier(identifier: string): Promise<AuthUserRow | null> {
   return queryOne<AuthUserRow & RowDataPacket>(
     `SELECT id, username, email, password_hash, full_name, role, status,
-            class_name, phone, member_code, last_login_at
+            class_name, phone, member_code, last_login_at, must_change_password
        FROM users
       WHERE username = ? OR email = ?
       LIMIT 1`,
@@ -174,7 +174,12 @@ export async function changePassword(userId: number, input: ChangePasswordInput)
   if (!ok) throw unauthorized('Kata sandi saat ini salah.');
 
   const passwordHash = await bcrypt.hash(input.newPassword, env.bcryptSaltRounds);
-  await execute('UPDATE users SET password_hash = ? WHERE id = ?', [passwordHash, userId]);
+  // Clearing the flag is part of the same write: a batch-imported account that
+  // changes its password must stop being nagged immediately.
+  await execute(
+    'UPDATE users SET password_hash = ?, must_change_password = 0 WHERE id = ?',
+    [passwordHash, userId],
+  );
 }
 
 /** Used by the admin member module to check for collisions before insert. */
