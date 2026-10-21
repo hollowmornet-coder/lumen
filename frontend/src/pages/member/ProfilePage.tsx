@@ -21,7 +21,6 @@ import {
   User,
 } from 'lucide-react';
 import { PageBody, PageHeader } from '@/components/layout/PageHeader';
-import { Avatar } from '@/components/ui/avatar';
 import { Badge, RoleBadge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Field, Input } from '@/components/ui/input';
@@ -129,17 +128,37 @@ export default function ProfilePage() {
             initial={reduce ? false : { opacity: 0, y: 8 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.32, ease: EASE_OUT }}
-            className="grid gap-5 lg:grid-cols-[minmax(0,20rem)_minmax(0,1fr)] lg:items-start"
+            // Two columns only from `xl`: at 1024 the columns are ~430px, which
+            // is too narrow for photo + name + QR, and the name wrapped.
+            className="grid gap-5 xl:grid-cols-2 xl:items-start"
           >
-            <div className="space-y-5">
-              <AvatarUploader />
-              <IdentityCard user={user} />
-              {user.role === 'user' ? <MyLevelCard /> : null}
-            </div>
-            <div className="space-y-5">
-              <ProfileForm user={user} />
-              <PasswordForm />
-            </div>
+            {/* Two columns only when there is something for both of them.
+                An admin has no level card, so a left column would hold a
+                single panel and leave ~340px of dead space under it. */}
+            {user.role === 'user' ? (
+              <>
+                <div className="space-y-5">
+                  <IdentityCard user={user} />
+                  <MyLevelCard />
+                </div>
+                <div className="space-y-5">
+                  <ProfileForm user={user} />
+                  <PasswordForm />
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="space-y-5 xl:col-span-2">
+                  <IdentityCard user={user} wide />
+                </div>
+                <div className="space-y-5">
+                  <ProfileForm user={user} />
+                </div>
+                <div className="space-y-5">
+                  <PasswordForm />
+                </div>
+              </>
+            )}
           </motion.div>
         )}
       </PageBody>
@@ -149,21 +168,32 @@ export default function ProfilePage() {
 
 /* ------------------------------------------------------------------ */
 
-function IdentityCard({ user }: { user: UserRecord }) {
+function IdentityCard({ user, wide = false }: { user: UserRecord; wide?: boolean }) {
   const level = useMyLevel({ enabled: user.role === 'user' });
+  const showCard = Boolean(user.memberCode) && user.role === 'user';
 
   return (
     <section className="panel p-5" aria-label="Data keanggotaan">
-      <div className="flex items-start gap-3">
-        <Avatar name={fact(user.fullName, '?')} src={user.avatarPath} size="lg" />
-        <div className="min-w-0">
-          <h2 className="font-display text-base font-semibold text-foreground">
+      {/* The eyebrow sits above the row, not inside it: inside, a narrow
+          column wrapped it to two lines while the name beside it did not. */}
+      <p className="eyebrow mb-2">Data keanggotaan</p>
+
+      {/* Photo, identity and the scannable code share one row. Stacking them
+          made this column ~370px taller than the forms beside it, which is
+          what left a hole at the bottom of the page.
+          The row is capped so that in the single-column layout (below `xl`)
+          the QR stays next to the name instead of drifting to the far edge. */}
+      <div className="flex max-w-2xl flex-col gap-4 sm:flex-row sm:items-start">
+        <AvatarUploader />
+
+        <div className="min-w-0 flex-1">
+          <h2 className="font-display text-lg font-semibold text-foreground text-balance">
             {fact(user.fullName)}
           </h2>
-          <p className="truncate text-xs text-muted-foreground">
-            {fact(user.username)} · {fact(user.email)}
+          <p className="mt-0.5 truncate text-xs text-muted-foreground">
+            {fact(user.username)} &middot; {fact(user.email)}
           </p>
-          <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+          <div className="mt-2 flex flex-wrap items-center gap-1.5">
             <RoleBadge role={user.role} />
             {level.data ? <LevelBadge level={level.data} /> : null}
             {user.status === 'active' ? (
@@ -175,28 +205,25 @@ function IdentityCard({ user }: { user: UserRecord }) {
             )}
           </div>
         </div>
+
+        {/* The code the desk scanner reads. */}
+        {showCard ? (
+          <figure className="flex shrink-0 flex-col items-center gap-1 self-center rounded-xl border border-border bg-background/40 p-2">
+            <QrCode
+              value={user.memberCode as string}
+              size={84}
+              label={`Kartu anggota ${user.fullName}`}
+            />
+            <figcaption className="font-mono text-[10px] font-semibold tracking-wider text-foreground">
+              {user.memberCode}
+            </figcaption>
+          </figure>
+        ) : null}
       </div>
 
       <hr className="rule my-4" aria-hidden />
 
-      {/* The code the desk scanner reads. Only meaningful for students; an
-          admin account has no member code to print on a card. */}
-      {user.memberCode && user.role === 'user' ? (
-        <div className="mb-4 flex flex-col items-center gap-2 rounded-xl border border-border bg-background/40 p-4">
-          <QrCode
-            value={user.memberCode}
-            caption={user.memberCode}
-            label={`Kartu anggota ${user.fullName}`}
-            size={148}
-          />
-          <p className="text-center text-2xs leading-relaxed text-muted-foreground">
-            Tunjukkan kode ini di meja sirkulasi. Petugas memindainya untuk membuka data
-            keanggotaan Anda tanpa mengetik.
-          </p>
-        </div>
-      ) : null}
-
-      <dl className="space-y-3">
+      <dl className={cn('grid gap-3', wide ? 'sm:grid-cols-2 xl:grid-cols-4' : 'sm:grid-cols-2')}>
         <FactRow icon={Hash} label="Kode anggota" value={fact(user.memberCode, 'Belum tersedia')} mono />
         <FactRow icon={User} label="Nama lengkap" value={fact(user.fullName)} />
         <FactRow icon={ShieldCheck} label="Username" value={fact(user.username)} mono />
@@ -206,13 +233,12 @@ function IdentityCard({ user }: { user: UserRecord }) {
         <FactRow icon={LogIn} label="Terakhir masuk" value={formatDateTime(user.lastLoginAt)} />
       </dl>
 
-      <div className="mt-4 flex items-start gap-2 rounded-lg border border-border bg-background/40 p-3">
-        <Info className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" aria-hidden />
-        <p className="text-2xs leading-relaxed text-muted-foreground">
-          Username, email, dan peran diisi serta dikelola oleh petugas perpustakaan, sehingga tidak
-          dapat diubah dari halaman ini.
-        </p>
-      </div>
+      <p className="mt-3 flex items-start gap-2 text-2xs leading-relaxed text-muted-foreground">
+        <Info className="mt-0.5 size-3 shrink-0" aria-hidden />
+        {showCard
+          ? 'Tunjukkan kode QR di meja sirkulasi. Username, email, dan peran dikelola petugas, jadi tidak dapat diubah di sini.'
+          : 'Username, email, dan peran dikelola petugas perpustakaan, jadi tidak dapat diubah di sini.'}
+      </p>
     </section>
   );
 }
@@ -516,25 +542,49 @@ function PasswordForm() {
 
 function ProfileSkeleton() {
   return (
-    <div className="grid gap-5 lg:grid-cols-[minmax(0,20rem)_minmax(0,1fr)] lg:items-start">
-      <div className="panel space-y-4 p-5" role="status" aria-label="Memuat profil">
-        <div className="flex items-center gap-3">
-          <Skeleton className="size-12 rounded-xl" />
-          <div className="flex-1 space-y-2">
-            <Skeleton className="h-3.5 w-32" />
-            <Skeleton className="h-3 w-44" />
-          </div>
-        </div>
-        <hr className="rule" aria-hidden />
-        {Array.from({ length: 6 }).map((_, i) => (
-          <div key={i} className="flex items-center gap-3">
-            <Skeleton className="size-7 shrink-0 rounded-md" />
-            <div className="flex-1 space-y-1.5">
-              <Skeleton className="h-2.5 w-20" />
-              <Skeleton className="h-3 w-36" />
+    <div className="grid gap-5 lg:grid-cols-2 lg:items-start">
+      <div className="space-y-5">
+        <div className="panel space-y-4 p-5" role="status" aria-label="Memuat profil">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-start">
+            <div className="flex w-full flex-col items-center gap-2.5 sm:w-32">
+              <Skeleton className="size-24 rounded-full" />
+              <Skeleton className="h-8 w-24" />
+            </div>
+            <div className="flex-1 space-y-2">
+              <Skeleton className="h-2.5 w-24" />
+              <Skeleton className="h-5 w-40" />
+              <Skeleton className="h-3 w-52" />
+              <div className="flex gap-1.5 pt-1">
+                <Skeleton className="h-4 w-16 rounded-full" />
+                <Skeleton className="h-4 w-20 rounded-full" />
+              </div>
             </div>
           </div>
-        ))}
+          <hr className="rule" aria-hidden />
+          <div className="grid gap-3 sm:grid-cols-2">
+            {Array.from({ length: 6 }).map((_, i) => (
+              <div key={i} className="flex items-center gap-3">
+                <Skeleton className="size-7 shrink-0 rounded-md" />
+                <div className="flex-1 space-y-1.5">
+                  <Skeleton className="h-2.5 w-20" />
+                  <Skeleton className="h-3 w-28" />
+                </div>
+              </div>
+            ))}
+          </div>
+          <Skeleton className="h-24 w-full rounded-xl" />
+        </div>
+
+        <div className="panel space-y-3 p-5" role="status" aria-label="Memuat level">
+          <Skeleton className="h-2.5 w-28" />
+          <Skeleton className="h-5 w-32" />
+          <Skeleton className="h-2 w-full" />
+          <div className="grid gap-1 sm:grid-cols-2">
+            {Array.from({ length: 4 }).map((_, i) => (
+              <Skeleton key={i} className="h-6 w-full rounded-lg" />
+            ))}
+          </div>
+        </div>
       </div>
 
       <div className="space-y-5">

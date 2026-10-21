@@ -76,7 +76,7 @@ export default function SeriesDetailPage() {
       <PageBody className="space-y-6">
         <Skeleton className="h-4 w-56" />
         <Skeleton className="h-8 w-80" />
-        <Skeleton className="h-[520px] w-full rounded-xl" />
+        <Skeleton className="h-[26rem] w-full rounded-xl" />
         <div className="panel p-4">
           <TableSkeleton rows={5} columns={4} />
         </div>
@@ -216,10 +216,8 @@ export default function SeriesDetailPage() {
                 tetap terbaca. Judul yang tidak ada di koleksi kami tidak bisa dibuka &mdash;
                 daftar lengkapnya ada di tabel di bawah.
               </p>
-              <div className="panel overflow-hidden">
-                <div className="h-[520px] min-h-[24rem] w-full">
-                  <WorksWheel items={wheelItems} label={series.name} action="Lihat" />
-                </div>
+              <div className="panel overflow-hidden p-2 sm:p-4">
+                <WorksWheel items={wheelItems} label={series.name} action="Lihat" />
               </div>
             </section>
 

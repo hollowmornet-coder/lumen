@@ -61,7 +61,9 @@ const ADMIN_NAV: NavItem[] = [
 
 const MEMBER_NAV: NavItem[] = [
   { to: '/perpustakaan', label: 'Beranda', icon: LayoutDashboard, end: true },
-  { to: '/katalog', label: 'Katalog Buku', icon: BookMarked },
+  // `end` matters: without it NavLink treats /katalog/seri as a child route of
+  // /katalog, so two sidebar items light up at once.
+  { to: '/katalog', label: 'Katalog Buku', icon: BookMarked, end: true },
   { to: '/katalog/seri', label: 'Katalog Seri', icon: Library },
   { to: '/perpustakaan/pinjaman', label: 'Pinjaman Saya', icon: ClipboardList },
   { to: '/perpustakaan/reservasi', label: 'Antrean Saya', icon: Library },

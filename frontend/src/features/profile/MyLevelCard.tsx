@@ -1,5 +1,5 @@
 import { motion, useReducedMotion } from 'framer-motion';
-import { Info, TrendingUp } from 'lucide-react';
+import { TrendingUp } from 'lucide-react';
 import { LevelBadge, LevelProgress } from '@/components/ui/level-badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useLevelTiers, useMyLevel } from '@/hooks/useApi';
@@ -36,6 +36,7 @@ export function MyLevelCard({ className }: { className?: string }) {
   }
 
   const data = level.data;
+  const ladder = tiers.data ?? [];
 
   return (
     <section className={cn('panel p-5', className)} aria-label="Level anggota">
@@ -60,22 +61,14 @@ export function MyLevelCard({ className }: { className?: string }) {
 
       <LevelProgress level={data} />
 
-      <div className="mt-4 flex items-start gap-2 rounded-lg border border-border bg-background/40 p-3">
-        <Info className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" aria-hidden />
-        <p className="text-2xs leading-relaxed text-muted-foreground">
-          Level dihitung dari jumlah buku yang benar-benar Anda pinjam, bukan dari jumlah klik.
-          Setiap pengembalian menambah satu angka.
-        </p>
-      </div>
-
-      {tiers.data && tiers.data.length > 0 ? (
+      {ladder.length > 0 ? (
         <div className="mt-4">
           <p className="mb-2 flex items-center gap-1.5 text-2xs font-medium uppercase tracking-wider text-muted-foreground">
             <TrendingUp className="size-3" aria-hidden />
             Tangga level
           </p>
-          <ol className="space-y-1.5">
-            {tiers.data.map((tier) => {
+          <ol className="grid gap-1 sm:grid-cols-2">
+            {ladder.map((tier) => {
               const reached = data.totalBorrowed >= tier.minLoans;
               const current = tier.level === data.level;
 
@@ -86,19 +79,17 @@ export function MyLevelCard({ className }: { className?: string }) {
                   animate={{ opacity: 1, x: 0 }}
                   transition={{ duration: 0.2, delay: reduce ? 0 : tier.level * 0.04 }}
                   className={cn(
-                    'flex items-center justify-between gap-2 rounded-lg border px-2.5 py-1.5 text-2xs',
+                    'flex items-center justify-between gap-2 rounded-lg border px-2 py-1 text-2xs',
                     current
                       ? 'border-primary/30 bg-electric-soft'
                       : 'border-transparent bg-background/30',
                   )}
                 >
-                  <span className="flex items-center gap-2">
+                  <span className="flex min-w-0 items-center gap-1.5">
                     <span
                       className={cn(
-                        'flex size-5 items-center justify-center rounded-full font-mono text-[10px] font-semibold',
-                        reached
-                          ? 'bg-primary text-white'
-                          : 'bg-muted text-muted-foreground',
+                        'flex size-4 shrink-0 items-center justify-center rounded-full font-mono text-[10px] font-semibold',
+                        reached ? 'bg-primary text-white' : 'bg-muted text-muted-foreground',
                       )}
                       aria-hidden
                     >
@@ -106,14 +97,14 @@ export function MyLevelCard({ className }: { className?: string }) {
                     </span>
                     <span
                       className={cn(
-                        'font-medium',
+                        'truncate font-medium',
                         current ? 'text-foreground' : 'text-muted-foreground',
                       )}
                     >
                       {tier.name}
                     </span>
                   </span>
-                  <span className="tabular-nums text-muted-foreground">
+                  <span className="shrink-0 tabular-nums text-muted-foreground">
                     {formatNumber(tier.minLoans)}+
                   </span>
                 </motion.li>

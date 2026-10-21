@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { toast } from 'sonner';
-import { Camera, ImagePlus, Loader2, Trash2 } from 'lucide-react';
+import { ImagePlus, Loader2, Trash2 } from 'lucide-react';
 import { Avatar } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
 import { useAuth } from '@/features/auth/AuthContext';
@@ -11,8 +11,8 @@ import type { User } from '@/types';
 /**
  * Accepted formats, mirrored from the server's magic-byte check.
  *
- * GIF is listed first because it is the reason this panel exists: a student
- * asked for an animated photo, and the server accepts it only for avatars.
+ * GIF is listed because it is the reason this panel exists: a student asked
+ * for an animated photo, and the server accepts it only for avatars.
  */
 const ACCEPT = 'image/png,image/jpeg,image/webp,image/gif';
 const MAX_MB = 5;
@@ -38,7 +38,14 @@ function validate(file: File): string | null {
   return null;
 }
 
-export function AvatarUploader() {
+/**
+ * Photo block: the avatar plus its three actions.
+ *
+ * It renders *without* a panel wrapper so it can sit inside the member card
+ * next to the identity facts. Standing alone as a full-width panel left a
+ * tall empty column on the profile page.
+ */
+export function AvatarUploader({ className }: { className?: string }) {
   const { user, setUser } = useAuth();
   const inputRef = React.useRef<HTMLInputElement>(null);
 
@@ -116,83 +123,71 @@ export function AvatarUploader() {
 
   const displayName = user?.fullName ?? 'Anggota';
   const currentSrc = preview ?? user?.avatarPath ?? null;
+  const hasPhoto = Boolean(user?.avatarPath);
 
   return (
-    <section className="panel p-5" aria-label="Foto profil">
-      <header className="mb-4 flex items-start gap-3">
-        <span
-          className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-electric-soft text-primary"
-          aria-hidden
-        >
-          <Camera className="size-4" />
-        </span>
-        <div>
-          <h2 className="font-display text-base font-semibold text-foreground">Foto Profil</h2>
-          <p className="text-xs text-muted-foreground">
-            JPG, PNG, WEBP, atau GIF (animasi didukung). Maksimal {MAX_MB} MB.
-          </p>
-        </div>
-      </header>
-
-      <div className="flex flex-col items-center gap-4 sm:flex-row sm:items-start">
-        <div className="relative">
-          <Avatar name={displayName} src={currentSrc} size="xl" ring />
-          {busy ? (
-            <span className="absolute inset-0 flex items-center justify-center rounded-full bg-navy-950/55">
-              <Loader2 className="size-5 animate-spin text-white" aria-hidden />
-            </span>
-          ) : null}
-        </div>
-
-        <div className="w-full space-y-3">
-          <div
-            onDragOver={(e) => {
-              e.preventDefault();
-              setDragging(true);
-            }}
-            onDragLeave={() => setDragging(false)}
-            onDrop={onDrop}
-            className={cn(
-              'flex flex-col items-center justify-center gap-1 rounded-xl border border-dashed p-4 text-center transition-colors',
-              dragging ? 'border-primary bg-electric-soft' : 'border-border bg-background/40',
-            )}
-          >
-            <ImagePlus className="size-4 text-muted-foreground" aria-hidden />
-            <p className="text-2xs text-muted-foreground">
-              Tarik foto ke sini, atau
-            </p>
-            <div className="mt-1 flex flex-wrap items-center justify-center gap-2">
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                disabled={busy}
-                onClick={() => inputRef.current?.click()}
-              >
-                Pilih Foto
-              </Button>
-              {user?.avatarPath ? (
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="ghost"
-                  disabled={busy}
-                  onClick={() => void remove()}
-                  className="text-destructive hover:bg-destructive-soft"
-                >
-                  <Trash2 className="size-3.5" aria-hidden />
-                  Hapus
-                </Button>
-              ) : null}
-            </div>
-          </div>
-
-          <p className="text-2xs leading-relaxed text-muted-foreground">
-            Foto hanya terlihat oleh petugas perpustakaan dan Anda sendiri. Berkas disimpan di
-            server perpustakaan, bukan di komputer ini.
-          </p>
-        </div>
+    <div
+      className={cn('flex w-full shrink-0 flex-col items-center gap-2.5 sm:w-32', className)}
+      aria-label="Foto profil"
+      onDragOver={(e) => {
+        e.preventDefault();
+        setDragging(true);
+      }}
+      onDragLeave={() => setDragging(false)}
+      onDrop={onDrop}
+    >
+      <div
+        className={cn(
+          'relative rounded-full p-1 transition-colors',
+          dragging ? 'bg-electric-soft ring-2 ring-primary ring-dashed' : 'ring-0',
+        )}
+      >
+        <Avatar name={displayName} src={currentSrc} size="xl" ring />
+        {busy ? (
+          <span className="absolute inset-0 flex items-center justify-center rounded-full bg-navy-950/55">
+            <Loader2 className="size-5 animate-spin text-white" aria-hidden />
+          </span>
+        ) : null}
       </div>
+
+      <div className="flex flex-wrap items-center justify-center gap-1.5">
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          disabled={busy}
+          onClick={() => inputRef.current?.click()}
+          title={dragging ? 'Lepaskan untuk mengunggah' : undefined}
+        >
+          <ImagePlus className="size-3.5" aria-hidden />
+          {hasPhoto ? 'Ganti' : 'Pilih Foto'}
+        </Button>
+        {hasPhoto ? (
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            disabled={busy}
+            onClick={() => void remove()}
+            className="text-destructive hover:bg-destructive-soft"
+            aria-label="Hapus foto profil"
+          >
+            <Trash2 className="size-3.5" aria-hidden />
+          </Button>
+        ) : null}
+      </div>
+
+      <p className="text-center text-[10px] leading-tight text-muted-foreground">
+        {dragging ? (
+          'Lepaskan berkas'
+        ) : (
+          <>
+            JPG · PNG · WEBP · GIF
+            <br />
+            Maksimal {MAX_MB} MB
+          </>
+        )}
+      </p>
 
       <input
         ref={inputRef}
@@ -205,6 +200,6 @@ export function AvatarUploader() {
           if (file) void upload(file);
         }}
       />
-    </section>
+    </div>
   );
 }
