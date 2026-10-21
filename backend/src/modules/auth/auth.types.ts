@@ -12,6 +12,7 @@ export interface AuthUserRow {
   class_name: string | null;
   phone: string | null;
   member_code: string | null;
+  avatar_path: string | null;
   last_login_at: string | null;
   must_change_password: number;
 }
@@ -25,6 +26,8 @@ export interface PublicUser {
   className: string | null;
   phone: string | null;
   memberCode: string | null;
+  /** Relative path of the uploaded photo, or null when none was set. */
+  avatarPath: string | null;
   status: UserStatus;
   lastLoginAt: string | null;
   /**
@@ -44,6 +47,7 @@ export function toPublicUser(row: AuthUserRow): PublicUser {
     className: row.class_name,
     phone: row.phone,
     memberCode: row.member_code,
+    avatarPath: row.avatar_path ?? null,
     status: row.status,
     lastLoginAt: row.last_login_at,
     mustChangePassword: Boolean(row.must_change_password),

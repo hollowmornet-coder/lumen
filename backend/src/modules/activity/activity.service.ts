@@ -8,6 +8,7 @@ export type ActivityAction =
   | 'auth.logout'
   | 'auth.register'
   | 'profile.update'
+  | 'profile.avatar'
   | 'password.change'
   | 'book.create'
   | 'book.update'

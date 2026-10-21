@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { requireAuth } from '../../middleware/auth';
-import { authLimiter } from '../../middleware/rateLimit';
+import { avatarUpload } from '../../lib/upload';
+import { authLimiter, uploadLimiter } from '../../middleware/rateLimit';
 import { validateBody } from '../../middleware/validate';
 import * as controller from './auth.controller';
 import {
@@ -25,6 +26,12 @@ router.post('/reset-password', authLimiter, validateBody(resetPasswordSchema), c
 
 router.get('/me', requireAuth, controller.me);
 router.patch('/profile', requireAuth, validateBody(updateProfileSchema), controller.updateMyProfile);
+
+// Profile photo. Uploads get their own rate-limit bucket because they move
+// megabytes, and the file itself is validated by magic bytes in `storeAvatar`.
+router.post('/avatar', requireAuth, uploadLimiter, avatarUpload.single('avatar'), controller.uploadAvatar);
+router.delete('/avatar', requireAuth, uploadLimiter, controller.removeAvatar);
+
 router.post(
   '/change-password',
   requireAuth,

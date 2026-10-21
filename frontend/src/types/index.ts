@@ -28,6 +28,8 @@ export interface User {
   className: string | null;
   phone: string | null;
   memberCode: string | null;
+  /** Relative path of the uploaded profile photo; null renders initials. */
+  avatarPath: string | null;
   status: UserStatus;
   lastLoginAt: string | null;
   /**
@@ -71,6 +73,57 @@ export interface Member extends User {
   createdAt: string;
   activeLoans: number;
   totalLoans: number;
+  /** Loans where a copy actually changed hands - the basis for `level`. */
+  borrowedCount: number;
+  level: MemberLevel;
+}
+
+/* ------------------------------------------------------------------ */
+/* Levels                                                              */
+/* ------------------------------------------------------------------ */
+
+export type LevelTone = 'neutral' | 'info' | 'cyan' | 'violet' | 'success' | 'warning';
+
+export interface LevelTier {
+  level: number;
+  name: string;
+  minLoans: number;
+  tone: LevelTone;
+  blurb: string;
+}
+
+/**
+ * Computed by the server from loan history - never stored.
+ * The client only renders it, so the thresholds live in one place.
+ */
+export interface MemberLevel {
+  level: number;
+  name: string;
+  tone: LevelTone;
+  blurb: string;
+  totalBorrowed: number;
+  currentMin: number;
+  nextMin: number | null;
+  nextName: string | null;
+  remaining: number;
+  /** 0-100 within the current tier; 100 at the top tier. */
+  progress: number;
+}
+
+export interface MyLevel extends MemberLevel {
+  /** Position on the leaderboard; null when the member never borrowed. */
+  rank: number | null;
+}
+
+export interface LeaderboardEntry {
+  rank: number;
+  id: number;
+  fullName: string;
+  memberCode: string | null;
+  className: string | null;
+  avatarPath: string | null;
+  totalBorrowed: number;
+  level: MemberLevel;
 }
 
 /**
@@ -88,6 +141,10 @@ export type ScanTarget =
       fullName: string;
       className: string | null;
       status: string;
+      /** Photo shown at the desk so staff can verify the person, not just the card. */
+      avatarPath: string | null;
+      /** Derived level, so the desk shows the same badge as everywhere else. */
+      level: MemberLevel;
     }
   | {
       kind: 'book';
@@ -313,9 +370,11 @@ export interface TopMember {
   id: number;
   fullName: string;
   memberCode: string | null;
+  avatarPath: string | null;
   borrowCount: number;
   activeCount: number;
   overdueCount: number;
+  level: MemberLevel;
 }
 
 export interface DashboardCharts {

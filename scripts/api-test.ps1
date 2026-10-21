@@ -89,7 +89,8 @@ function Invoke-ApiUpload {
     [string]$FilePath,
     [string]$Token,
     [string]$FieldName = "file",
-    [hashtable]$Fields = $null
+    [hashtable]$Fields = $null,
+    [string]$ContentType = "application/octet-stream"
   )
   Add-Type -AssemblyName System.Net.Http | Out-Null
   $client = New-Object System.Net.Http.HttpClient
@@ -106,7 +107,7 @@ function Invoke-ApiUpload {
   $bytes = [System.IO.File]::ReadAllBytes($FilePath)
   $fileContent = New-Object System.Net.Http.ByteArrayContent($bytes, 0, $bytes.Length)
   $fileContent.Headers.ContentType =
-    New-Object System.Net.Http.Headers.MediaTypeHeaderValue("application/octet-stream")
+    New-Object System.Net.Http.Headers.MediaTypeHeaderValue($ContentType)
   $content.Add($fileContent, $FieldName, [System.IO.Path]::GetFileName($FilePath))
 
   $response = $client.PostAsync("$BaseUrl$Path", $content).GetAwaiter().GetResult()
@@ -907,6 +908,119 @@ if ($template.Path) {
   $userRestore = Invoke-ApiUpload -Path "/backup/restore" -FilePath $template.Path -Token $userToken -Fields @{ confirmation = "PULIHKAN" }
   Assert-True "Siswa tidak boleh memulihkan database (403)" ($userRestore.Status -eq 403) "got $($userRestore.Status)"
 }
+
+# ---------------------------------------------------------------- AVATAR & LEVEL
+Write-Host "`n[23] Foto Profil & Level Anggota" -ForegroundColor Yellow
+
+# Test fixtures. The server validates magic bytes, so these are real files,
+# not just files with an image extension.
+$assetDir = Join-Path $env:TEMP "lumen-api-test"
+New-Item -ItemType Directory -Force -Path $assetDir | Out-Null
+
+$pngPath = Join-Path $assetDir "avatar.png"
+[System.IO.File]::WriteAllBytes($pngPath, [Convert]::FromBase64String(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg=="))
+
+# A real 1x1 GIF: proves the animated format is accepted.
+$gifPath = Join-Path $assetDir "avatar.gif"
+[System.IO.File]::WriteAllBytes($gifPath, [Convert]::FromBase64String(
+  "R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"))
+
+$txtPath = Join-Path $assetDir "bukan-gambar.png"
+[System.IO.File]::WriteAllText($txtPath, "ini bukan gambar")
+
+$bigPath = Join-Path $assetDir "terlalu-besar.gif"
+$bigBytes = New-Object byte[] (6 * 1024 * 1024)
+[System.Text.Encoding]::ASCII.GetBytes("GIF89a").CopyTo($bigBytes, 0)
+[System.IO.File]::WriteAllBytes($bigPath, $bigBytes)
+
+$userAvatarBad = Invoke-ApiUpload -Path "/auth/avatar" -FilePath $txtPath -Token $userToken -FieldName "avatar" -ContentType "image/png"
+Assert-True "Unggah berkas bukan gambar ditolak (400)" ($userAvatarBad.Status -eq 400) "got $($userAvatarBad.Status) $($userAvatarBad.Json.message)"
+
+$userAvatarBig = Invoke-ApiUpload -Path "/auth/avatar" -FilePath $bigPath -Token $userToken -FieldName "avatar" -ContentType "image/gif"
+Assert-True "Foto melebihi batas ukuran ditolak (400)" ($userAvatarBig.Status -eq 400) "got $($userAvatarBig.Status)"
+
+$userAvatar = Invoke-ApiUpload -Path "/auth/avatar" -FilePath $pngPath -Token $userToken -FieldName "avatar" -ContentType "image/png"
+Assert-True "Siswa dapat mengunggah foto profil" ($userAvatar.Status -eq 200) "got $($userAvatar.Status) $($userAvatar.Json.message)"
+$avatarPath = $userAvatar.Json.data.avatarPath
+Assert-True "Foto profil menunjuk ke /uploads/avatars/" ($avatarPath -like "/uploads/avatars/*") "path=$avatarPath"
+
+$avatarUrl = $BaseUrl -replace '/api$', ''
+try {
+  $avatarRes = Invoke-WebRequest "$avatarUrl$avatarPath" -UseBasicParsing
+  $avatarStatus = $avatarRes.StatusCode
+  $avatarType = $avatarRes.Headers["Content-Type"]
+} catch { $avatarStatus = 0; $avatarType = "" }
+Assert-True "Berkas foto profil dapat diambil lewat server" ($avatarStatus -eq 200) "got $avatarStatus"
+Assert-True "Foto profil disajikan sebagai image/png" ($avatarType -like "image/png*") "type=$avatarType"
+
+$meAfterAvatar = Invoke-Api -Method GET -Path "/auth/me" -Token $userToken
+Assert-True "/auth/me memuat avatarPath terbaru" ($meAfterAvatar.Json.data.avatarPath -eq $avatarPath) "got $($meAfterAvatar.Json.data.avatarPath)"
+
+$gifAvatar = Invoke-ApiUpload -Path "/auth/avatar" -FilePath $gifPath -Token $userToken -FieldName "avatar" -ContentType "image/gif"
+Assert-True "Foto profil GIF diterima" ($gifAvatar.Status -eq 200) "got $($gifAvatar.Status) $($gifAvatar.Json.message)"
+Assert-True "Ekstensi GIF dipertahankan apa adanya" ($gifAvatar.Json.data.avatarPath -like "*.gif") "path=$($gifAvatar.Json.data.avatarPath)"
+
+$oldAvatarUrl = "$avatarUrl$avatarPath"
+$oldStatus = 0
+try {
+  $oldRes = Invoke-WebRequest $oldAvatarUrl -UseBasicParsing
+  $oldStatus = $oldRes.StatusCode
+} catch {
+  if ($_.Exception.Response) { $oldStatus = [int]$_.Exception.Response.StatusCode }
+}
+Assert-True "Foto lama dihapus setelah diganti" ($oldStatus -eq 404) "got $oldStatus"
+
+$adminAvatar = Invoke-ApiUpload -Path "/auth/avatar" -FilePath $pngPath -Token $adminToken -FieldName "avatar" -ContentType "image/png"
+Assert-True "Petugas juga dapat memasang foto profil" ($adminAvatar.Status -eq 200) "got $($adminAvatar.Status)"
+
+$noAuthAvatar = Invoke-ApiUpload -Path "/auth/avatar" -FilePath $pngPath -Token "" -FieldName "avatar" -ContentType "image/png"
+Assert-True "Unggah foto tanpa sesi ditolak (401)" ($noAuthAvatar.Status -eq 401) "got $($noAuthAvatar.Status)"
+
+# ---- Level: derived from completed borrows, never stored.
+$tiers = Invoke-Api -Method GET -Path "/levels" -Token $userToken
+Assert-True "Siswa dapat membaca tangga level" ($tiers.Status -eq 200) "got $($tiers.Status)"
+Assert-True "Tangga level berisi beberapa tingkatan" (@($tiers.Json.data).Count -ge 3) "jumlah=$(@($tiers.Json.data).Count)"
+$firstTier = @($tiers.Json.data)[0]
+Assert-True "Level terendah dimulai dari 0 peminjaman" ($firstTier.minLoans -eq 0) "min=$($firstTier.minLoans)"
+
+$myLevel = Invoke-Api -Method GET -Path "/levels/me" -Token $userToken
+Assert-True "Siswa dapat membaca level sendiri" ($myLevel.Status -eq 200) "got $($myLevel.Status)"
+$lvl = $myLevel.Json.data
+Assert-True "Anggota yang pernah meminjam punya totalBorrowed > 0" ($lvl.totalBorrowed -ge 1) "total=$($lvl.totalBorrowed)"
+Assert-True "Level konsisten dengan ambang yang dilaporkan" ($lvl.currentMin -le $lvl.totalBorrowed) "min=$($lvl.currentMin) total=$($lvl.totalBorrowed)"
+Assert-True "Kemajuan level berada di rentang 0-100" ($lvl.progress -ge 0 -and $lvl.progress -le 100) "progress=$($lvl.progress)"
+
+$board = Invoke-Api -Method GET -Path "/levels/leaderboard?limit=10" -Token $userToken
+Assert-True "Papan peringkat dapat dibaca siswa" ($board.Status -eq 200) "got $($board.Status)"
+$boardRows = @($board.Json.data)
+Assert-True "Papan peringkat tidak memuat anggota tanpa peminjaman" (@($boardRows | Where-Object { $_.totalBorrowed -lt 1 }).Count -eq 0)
+Assert-True "Peringkat pertama memiliki peminjaman terbanyak" ($boardRows.Count -eq 0 -or $boardRows[0].totalBorrowed -eq ($boardRows | Measure-Object -Property totalBorrowed -Maximum).Maximum)
+
+# A member with no loans must start at level 1 - never at a middle tier.
+$fresh = Invoke-Api -Method POST -Path "/members" -Body @{
+  username = "levelbaru$suffix"
+  email = "levelbaru$suffix@lumen.sch.id"
+  fullName = "Anggota Level Baru"
+  className = "X"
+  password = "Siswa123!"
+} -Token $adminToken
+if ($fresh.Status -eq 201) {
+  $freshLogin = Invoke-Api -Method POST -Path "/auth/login" -Body @{ identifier = "levelbaru$suffix"; password = "Siswa123!" }
+  $freshLevel = Invoke-Api -Method GET -Path "/levels/me" -Token $freshLogin.Json.data.token
+  Assert-True "Anggota baru mulai di level 1" ($freshLevel.Json.data.level -eq 1) "level=$($freshLevel.Json.data.level)"
+  Assert-True "Anggota baru belum punya peringkat" ($null -eq $freshLevel.Json.data.rank) "rank=$($freshLevel.Json.data.rank)"
+  Invoke-Api -Method DELETE -Path "/members/$($fresh.Json.data.id)" -Token $adminToken | Out-Null
+}
+
+$memberList = Invoke-Api -Method GET -Path "/members?pageSize=5" -Token $adminToken
+Assert-True "Daftar anggota memuat level" (@($memberList.Json.data | Where-Object { $null -eq $_.level }).Count -eq 0)
+
+$delAvatar = Invoke-Api -Method DELETE -Path "/auth/avatar" -Token $userToken
+Assert-True "Siswa dapat menghapus foto profil" ($delAvatar.Status -eq 200 -and $null -eq $delAvatar.Json.data.avatarPath) "got $($delAvatar.Status)"
+
+$delAvatarAgain = Invoke-Api -Method DELETE -Path "/auth/avatar" -Token $userToken
+Assert-True "Menghapus foto saat belum ada tetap berhasil (idempoten)" ($delAvatarAgain.Status -eq 200) "got $($delAvatarAgain.Status)"
 
 # ---------------------------------------------------------------- SUMMARY
 Write-Host "`n=== HASIL ===" -ForegroundColor Cyan

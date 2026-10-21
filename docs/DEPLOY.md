@@ -66,6 +66,13 @@ membawa transpiler hanya untuk dipakai sekali di setiap boot.
 > tersedia. Tanpa itu endpoint mengembalikan error yang menyebutkan biner mana
 > yang tidak ditemukan — bukan kegagalan senyap.
 
+> **Berkas unggahan tidak ikut image:** sampul buku (`uploads/covers/`) dan foto
+> profil (`uploads/avatars/`) ditulis ke disk saat runtime. Di platform yang
+> filesystem-nya sementara (Render/Railway), pasang **persistent volume** pada
+> `UPLOAD_DIR` — kalau tidak, semua foto hilang setiap kali service restart dan
+> database akan menyimpan path yang menunjuk ke berkas yang sudah tidak ada.
+> Batas ukuran foto profil diatur `AVATAR_MAX_UPLOAD_MB` (default 5).
+
 ## Command untuk push cepat
 
 ```

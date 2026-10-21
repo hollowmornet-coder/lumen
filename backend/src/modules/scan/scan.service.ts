@@ -1,4 +1,5 @@
 import { queryOne, type RowDataPacket } from '../../config/db';
+import { resolveLevel, type MemberLevel } from '../levels/levels';
 
 /**
  * What a scanned code turned out to be.
@@ -17,6 +18,10 @@ export type ScanTarget =
       fullName: string;
       className: string | null;
       status: string;
+      /** Photo shown at the desk so staff can verify the person, not just the card. */
+      avatarPath: string | null;
+      /** Derived level, so the desk shows the same badge as everywhere else. */
+      level: MemberLevel;
     }
   | {
       kind: 'book';
@@ -84,12 +89,17 @@ async function findMember(code: string): Promise<ScanTarget | null> {
       full_name: string;
       class_name: string | null;
       status: string;
+      avatar_path: string | null;
+      total_borrowed: number;
     }
   >(
-    `SELECT id, member_code, username, full_name, class_name, status
-       FROM users
-      WHERE role = 'user'
-        AND (member_code = ? OR username = ?)
+    `SELECT u.id, u.member_code, u.username, u.full_name, u.class_name, u.status,
+            u.avatar_path,
+            (SELECT COUNT(*) FROM loans l
+              WHERE l.user_id = u.id AND l.borrowed_at IS NOT NULL) AS total_borrowed
+       FROM users u
+      WHERE u.role = 'user'
+        AND (u.member_code = ? OR u.username = ?)
       LIMIT 1`,
     [code, code],
   );
@@ -104,6 +114,8 @@ async function findMember(code: string): Promise<ScanTarget | null> {
     fullName: row.full_name,
     className: row.class_name,
     status: row.status,
+    avatarPath: row.avatar_path ?? null,
+    level: resolveLevel(Number(row.total_borrowed ?? 0)),
   };
 }
 

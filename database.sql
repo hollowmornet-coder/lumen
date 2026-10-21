@@ -24,8 +24,10 @@
 --      saat dibaca: tenggat melekat pada keputusan petugas saat itu.
 --   6. Urutan antrean (`reservations`) dihitung dari `created_at`, tidak ada
 --      kolom posisi yang harus disinkronkan ulang.
+--   7. Level anggota tidak disimpan: ia diturunkan dari `loans.borrowed_at`
+--      (lihat backend/src/modules/levels/levels.ts).
 --
---  Skema ini sudah memuat seluruh perubahan migrasi 001-005, sehingga
+--  Skema ini sudah memuat seluruh perubahan migrasi 001-007, sehingga
 --  instalasi baru tidak perlu menjalankan migrasi satu per satu.
 -- =====================================================================
 
@@ -74,6 +76,7 @@ CREATE TABLE `users` (
   `class_name`    VARCHAR(50)     NULL,
   `phone`         VARCHAR(30)     NULL,
   `address`       VARCHAR(200)    NULL,
+  `avatar_path`   VARCHAR(255)    NULL COMMENT 'Foto profil di /uploads/avatars',
   `status`        ENUM('active','inactive') NOT NULL DEFAULT 'active',
   `must_change_password` TINYINT(1)       NOT NULL DEFAULT 0,  -- akun hasil impor massal
   `last_login_at` DATETIME        NULL,

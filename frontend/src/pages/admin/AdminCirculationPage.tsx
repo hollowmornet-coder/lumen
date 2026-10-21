@@ -13,10 +13,12 @@ import {
   UserRound,
 } from 'lucide-react';
 import { PageBody, PageHeader } from '@/components/layout/PageHeader';
+import { Avatar } from '@/components/ui/avatar';
 import { MiniCover } from '@/components/ui/book-cover';
 import { Badge, StockBadge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Field, Input, Textarea } from '@/components/ui/input';
+import { LevelBadge } from '@/components/ui/level-badge';
 import { QrCode } from '@/components/ui/qr-code';
 import { EmptyState, ErrorState } from '@/components/ui/states';
 import { api } from '@/lib/api';
@@ -342,9 +344,7 @@ export default function AdminCirculationPage() {
             {member ? (
               <div className="rounded-xl border border-primary/25 bg-electric-soft/40 p-4">
                 <div className="flex items-start gap-3">
-                  <span className="flex size-10 shrink-0 items-center justify-center rounded-full bg-primary/15 text-primary">
-                    <UserRound className="size-5" aria-hidden />
-                  </span>
+                  <Avatar name={member.fullName} src={member.avatarPath} size="md" />
                   <div className="min-w-0 flex-1">
                     <p className="truncate font-display text-sm font-semibold text-foreground">
                       {member.fullName}
@@ -354,6 +354,7 @@ export default function AdminCirculationPage() {
                       {member.className ? ` · ${member.className}` : ''}
                     </p>
                     <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                      <LevelBadge level={member.level} />
                       <Badge tone={quotaFull ? 'danger' : 'info'}>
                         {formatNumber(quotaUsed)}/{formatNumber(memberLimit)} buku dipinjam
                       </Badge>
@@ -419,9 +420,7 @@ export default function AdminCirculationPage() {
                           onClick={() => setMember(m)}
                           className="flex w-full items-center gap-3 px-3 py-2.5 text-left transition-colors hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
                         >
-                          <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-muted text-2xs font-semibold text-muted-foreground">
-                            {m.fullName.slice(0, 2).toUpperCase()}
-                          </span>
+                          <Avatar name={m.fullName} src={m.avatarPath} size="sm" />
                           <span className="min-w-0 flex-1">
                             <span className="block truncate text-sm font-medium text-foreground">
                               {m.fullName}

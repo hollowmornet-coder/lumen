@@ -72,6 +72,7 @@ erDiagram
         varchar      class_name
         varchar      phone
         varchar      address
+        varchar      avatar_path      "foto profil di /uploads/avatars, NULL = inisial"
         enum         status           "active | inactive"
         tinyint      must_change_password "1 = wajib ganti sandi saat login"
         datetime     last_login_at
@@ -465,7 +466,60 @@ diinginkan tetapi persediaannya kurang menjadi daftar belanja pengadaan.
 
 ---
 
-## 5. Kompilasi Ulang Skema
+## 4c. Foto Profil & Level (migrasi 007)
+
+Migrasi `007_profile_level.sql` menambahkan satu kolom dan **tidak** menambah tabel.
+
+### `users.avatar_path`
+
+| Kolom | Tipe | Catatan |
+|---|---|---|
+| `avatar_path` | VARCHAR(255) NULL | Contoh: `/uploads/avatars/3f9a….gif` |
+
+NULL berarti anggota belum pernah mengunggah foto; UI menampilkan inisial nama.
+Berkasnya ada di disk (`uploads/avatars/`), bukan di database, sehingga dump SQL
+tetap ringan dan bisa dipindahkan tanpa membawa biner.
+
+MIME type tidak disimpan: ekstensi pada path sudah ditentukan server dari
+**magic bytes** saat unggah (`backend/src/lib/upload.ts`), dan `express.static`
+memakai ekstensi itu untuk header `Content-Type`. Format yang diterima:
+PNG, JPG, WEBP, dan **GIF** (khusus avatar — sampul buku tetap tanpa GIF).
+
+### Level anggota — tidak ada tabel, tidak ada kolom
+
+Level adalah **nilai turunan**, sama seperti `overdue`:
+
+```
+level = f( COUNT(loans WHERE user_id = ? AND borrowed_at IS NOT NULL) )
+```
+
+Kurva level tinggal di `backend/src/modules/levels/levels.ts`:
+
+| Level | Nama | Peminjaman minimum |
+|---|---|---|
+| 1 | Pemula | 0 |
+| 2 | Pembaca | 5 |
+| 3 | Kutu Buku | 15 |
+| 4 | Pustakawan Muda | 30 |
+| 5 | Legenda Literasi | 60 |
+
+Alasan tidak disimpan:
+
+1. Angka turunan yang disimpan harus diperbarui di **setiap** jalur yang
+   mengubah riwayat (pinjam, kembali, batal, hapus). Satu jalur terlewat =
+   level berbohong, dan tidak ada cara mendeteksinya.
+2. Kurva bisa berubah tanpa migrasi data: mengubah konstanta langsung
+   berlaku untuk semua anggota.
+3. Kurva bukan aturan operasional (tidak mengubah denda/kuota), jadi tidak
+   perlu masuk tabel `settings`.
+
+`borrowed_at IS NOT NULL` dipilih sebagai penanda, bukan `status = 'returned'`:
+status berubah setelah buku kembali (rusak/hilang), sedangkan `borrowed_at`
+tetap menandai "buku ini pernah benar-benar diserahkan". Pengajuan yang
+ditolak atau dibatalkan tidak pernah mengisi kolom itu, sehingga tidak
+menaikkan level.
+
+---
 
 Untuk membuat ulang seluruh skema dari nol:
 
@@ -474,7 +528,7 @@ DROP DATABASE IF EXISTS lumen_db;
 -- lalu import ulang database.sql
 ```
 
-`database.sql` sudah memuat seluruh perubahan migrasi 001-006, jadi instalasi baru
+`database.sql` sudah memuat seluruh perubahan migrasi 001-007, jadi instalasi baru
 cukup satu impor. Berkas di `migrations/` disimpan sebagai riwayat perubahan untuk
 instalasi yang sudah berjalan — bukan langkah tambahan bagi pemasangan baru.
 

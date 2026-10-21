@@ -1,13 +1,16 @@
 import type { Request, Response } from 'express';
 import { env } from '../../config/env';
 import { asyncHandler } from '../../lib/asyncHandler';
-import { unauthorized } from '../../lib/errors';
+import { badRequest, unauthorized } from '../../lib/errors';
+import { removeStoredFile, storeAvatar } from '../../lib/upload';
 import { AUTH_COOKIE, signToken } from '../../middleware/auth';
 import { logActivity } from '../activity/activity.service';
 import {
   changePassword,
+  clearAvatarPath,
   findAuthUserById,
   registerMember,
+  setAvatarPath,
   updateProfile,
   verifyCredentials,
 } from './auth.service';
@@ -126,6 +129,76 @@ export const updateMyProfile = asyncHandler(async (req: Request, res: Response) 
   });
 
   res.json({ success: true, data: user });
+});
+
+/**
+ * Uploads a profile photo for the signed-in user.
+ *
+ * The response is the full, freshly-read user record so the client can adopt
+ * it directly (`setUser`) instead of guessing what changed.
+ */
+export const uploadAvatar = asyncHandler(async (req: Request, res: Response) => {
+  if (!req.user) throw unauthorized();
+  if (!req.file) throw badRequest('Pilih berkas foto terlebih dahulu.');
+
+  const stored = await storeAvatar(req.file.buffer);
+
+  let previousPath: string | null = null;
+  try {
+    previousPath = await setAvatarPath(req.user.id, stored.relativePath);
+  } catch (err) {
+    // Never leave an orphaned file behind when the write fails.
+    await removeStoredFile(stored.relativePath);
+    throw err;
+  }
+
+  // Old file goes only after the new path is committed.
+  await removeStoredFile(previousPath);
+
+  const user = await findAuthUserById(req.user.id);
+  if (!user) throw unauthorized();
+
+  await logActivity({
+    userId: req.user.id,
+    actorName: user.full_name,
+    action: 'profile.avatar',
+    entityType: 'auth',
+    entityId: user.id,
+    description: `${user.full_name} memperbarui foto profil`,
+    ipAddress: req.ip ?? undefined,
+  });
+
+  res.json({
+    success: true,
+    data: toPublicUser(user),
+    message: 'Foto profil berhasil diperbarui.',
+  });
+});
+
+export const removeAvatar = asyncHandler(async (req: Request, res: Response) => {
+  if (!req.user) throw unauthorized();
+
+  const previousPath = await clearAvatarPath(req.user.id);
+  await removeStoredFile(previousPath);
+
+  const user = await findAuthUserById(req.user.id);
+  if (!user) throw unauthorized();
+
+  await logActivity({
+    userId: req.user.id,
+    actorName: user.full_name,
+    action: 'profile.avatar',
+    entityType: 'auth',
+    entityId: user.id,
+    description: `${user.full_name} menghapus foto profil`,
+    ipAddress: req.ip ?? undefined,
+  });
+
+  res.json({
+    success: true,
+    data: toPublicUser(user),
+    message: 'Foto profil dihapus.',
+  });
 });
 
 export const changeMyPassword = asyncHandler(async (req: Request, res: Response) => {

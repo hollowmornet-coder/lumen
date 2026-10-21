@@ -13,7 +13,7 @@ hasil pengujian nyata, keterbatasan, dan rencana pengembangan lanjutan.
 | Koneksi database nyata (bukan dummy) | ✅ Terhubung MariaDB |
 | Berjalan tanpa internet | ✅ Tanpa font/aset eksternal |
 | Build tanpa error | ✅ Backend & frontend |
-| Uji fungsional otomatis | ✅ **224/224 lulus** |
+| Uji fungsional otomatis | ✅ **251/251 lulus** |
 | Uji regresi fitur lanjutan | ✅ **28/28 lulus** |
 | Dokumentasi lengkap | ✅ 10 berkas dokumentasi + `database.sql` |
 
@@ -59,6 +59,9 @@ Soal UKK meminta beberapa hal berikut. Berikut pemetaannya:
 | Ulasan & rating | Satu ulasan per anggota per buku, dengan syarat pernah meminjam |
 | Daftar keinginan | Penanda minat baca + laporan judul paling diminati untuk pengadaan |
 | Pengumuman | Audiens `all`/`user`/`admin`, bisa disematkan dan berkedaluwarsa |
+| Foto profil (GIF) | Unggah/ganti/hapus; GIF animasi utuh, validasi magic bytes, 5 MB |
+| Level anggota | Diturunkan dari `borrowed_at`, 5 tingkatan, dengan bilah kemajuan |
+| Papan peringkat | Top pembaca di beranda siswa; posisi diri via `ROW_NUMBER()` |
 | Pengaturan dinamis | 15 aturan operasional bisa diubah admin |
 
 ---
@@ -112,10 +115,10 @@ Soal UKK meminta beberapa hal berikut. Berikut pemetaannya:
 | Build backend | `npm run build` | ✅ `dist/server.js` |
 | Tipe frontend | `npx tsc -p tsconfig.app.json --noEmit` | ✅ 0 error |
 | Build frontend | `npm run build` | ✅ bundle terpecah per halaman |
-| Uji API | `scripts\api-test.ps1` | ✅ **224/224 lulus** |
+| Uji API | `scripts\api-test.ps1` | ✅ **251/251 lulus** |
 | Uji regresi sirkulasi | Manual via API (R1-R28) | ✅ **28/28 lulus** |
 
-Rincian 224 pemeriksaan ada di [`TESTING.md`](TESTING.md).
+Rincian 251 pemeriksaan ada di [`TESTING.md`](TESTING.md).
 
 ### 4.2 Konsistensi Data
 
@@ -163,7 +166,7 @@ Dinyatakan terbuka agar tidak ada klaim yang tidak benar:
 | 3 | **Token reset ditampilkan di layar**, bukan dikirim email | Siapa pun yang melihat layar dapat memakainya | Instalasi belum punya server surat; token tetap sekali pakai dan berlaku 30 menit |
 | 4 | **Cover buku tidak dikompresi** di server | Berkas besar menambah I/O | tanpa library kompresi gambar; ukuran dibatasi 3 MB |
 | 5 | **Rate limiter in-memory** | Reset saat server restart | Store eksternal tidak diperlukan untuk aplikasi lokal |
-| 6 | **Tidak ada unit test terotomatis** (hanya uji integrasi) | Cakupan per-fungsi kurang | Uji integrasi 224 + 28 skenario lebih bernilai untuk UKK; waktu dialokasikan ke fitur |
+| 6 | **Tidak ada unit test terotomatis** (hanya uji integrasi) | Cakupan per-fungsi kurang | Uji integrasi 251 + 28 skenario lebih bernilai untuk UKK; waktu dialokasikan ke fitur |
 | 7 | **Tidak ada pagination di ekspor** | Ekspor dibatasi 5000 baris | Cukup untuk skala sekolah; pesan jelas bila terlampaui |
 | 8 | **Grafik tidak di-cache** | Query ulang saat filter berubah | Data kecil; filter harus mencerminkan kondisi terkini |
 | 9 | **Tidak ada pencarian fuzzy/typo-tolerant** | Kesalahan ketik minor | Implementasi `LIKE` sederhana, cukup untuk kata kunci Indonesia |
@@ -248,7 +251,7 @@ secara pembelajaran:
 | Kualitas database | ★★★★★ | Ternormalisasi, constraint, indeks, transaksi |
 | Desain antarmuka | ★★★★★ | Sistem desain konsisten, animasi bermakna |
 | Dokumentasi | ★★★★★ | 10 berkas dokumentasi + catatan debugging nyata |
-| Kematangan | ★★★★☆ | Build bersih, 224 + 28 uji, siap demo |
+| Kematangan | ★★★★☆ | Build bersih, 251 + 28 uji, siap demo |
 
 ### Kesimpulan
 

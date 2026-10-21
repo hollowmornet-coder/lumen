@@ -22,8 +22,10 @@ import {
   X,
 } from 'lucide-react';
 import { PageBody, PageHeader } from '@/components/layout/PageHeader';
+import { Avatar } from '@/components/ui/avatar';
 import { Badge, BookStatusBadge, RoleBadge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { LevelBadge } from '@/components/ui/level-badge';
 import {
   ConfirmContent,
   ConfirmDialog,
@@ -44,7 +46,7 @@ import {
   useListParams,
   useMembers,
 } from '@/hooks/useApi';
-import { formatDate, formatNumber, initials } from '@/lib/utils';
+import { formatDate, formatNumber } from '@/lib/utils';
 import { staggerContainer, staggerItem } from '@/lib/motion';
 import type { Member } from '@/types';
 import { MemberImportDialog } from './MemberImportDialog';
@@ -474,6 +476,12 @@ export default function AdminMembersPage() {
                     scope="col"
                     className="px-4 py-3 text-left text-2xs font-semibold uppercase tracking-wider text-muted-foreground"
                   >
+                    Level
+                  </th>
+                  <th
+                    scope="col"
+                    className="px-4 py-3 text-left text-2xs font-semibold uppercase tracking-wider text-muted-foreground"
+                  >
                     Status
                   </th>
                   <th
@@ -488,7 +496,7 @@ export default function AdminMembersPage() {
               {members.isLoading ? (
                 <tbody>
                   <tr>
-                    <td colSpan={8} className="px-4 py-4">
+                    <td colSpan={9} className="px-4 py-4">
                       <TableSkeleton rows={6} columns={4} />
                     </td>
                   </tr>
@@ -496,7 +504,7 @@ export default function AdminMembersPage() {
               ) : members.isError ? (
                 <tbody>
                   <tr>
-                    <td colSpan={8}>
+                    <td colSpan={9}>
                       <ErrorState
                         title="Gagal memuat daftar anggota"
                         message={members.error?.message}
@@ -508,7 +516,7 @@ export default function AdminMembersPage() {
               ) : items.length === 0 ? (
                 <tbody>
                   <tr>
-                    <td colSpan={8}>
+                    <td colSpan={9}>
                       {hasFilters ? (
                         <NoResultsState
                           onReset={clearFilters}
@@ -545,7 +553,7 @@ export default function AdminMembersPage() {
                     >
                       <td className="px-4 py-3 align-top">
                         <div className="flex items-center gap-3">
-                          <MemberAvatar name={member.fullName} />
+                          <MemberAvatar name={member.fullName} src={member.avatarPath} />
                           <div className="min-w-0 max-w-[14rem]">
                             <p className="truncate text-sm font-medium text-foreground">
                               {member.fullName}
@@ -600,6 +608,14 @@ export default function AdminMembersPage() {
                           </span>
                         </p>
                         <p className="text-2xs text-muted-foreground">aktif / total</p>
+                      </td>
+
+                      <td className="px-4 py-3 align-top">
+                        {member.role === 'user' ? (
+                          <LevelBadge level={member.level} />
+                        ) : (
+                          <span className="text-2xs text-muted-foreground">-</span>
+                        )}
                       </td>
 
                       <td className="px-4 py-3 align-top">
@@ -670,15 +686,8 @@ export default function AdminMembersPage() {
 
 /* ------------------------------------------------------------------ */
 
-function MemberAvatar({ name }: { name: string }) {
-  return (
-    <span
-      aria-hidden
-      className="flex size-9 shrink-0 items-center justify-center rounded-full bg-electric-soft font-display text-xs font-semibold text-primary"
-    >
-      {initials(name)}
-    </span>
-  );
+function MemberAvatar({ name, src }: { name: string; src?: string | null }) {
+  return <Avatar name={name} src={src} size="md" />;
 }
 
 function MemberActions({

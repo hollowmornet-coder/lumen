@@ -16,11 +16,13 @@ import {
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { PageBody, PageHeader } from '@/components/layout/PageHeader';
+import { Avatar } from '@/components/ui/avatar';
 import { StatCard, HeadlineFigure } from '@/components/ui/stat-card';
 import { ChartSkeleton, Skeleton } from '@/components/ui/skeleton';
 import { EmptyState, ErrorState } from '@/components/ui/states';
 import { Badge, LoanStatusBadge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { LevelBadge } from '@/components/ui/level-badge';
 import {
   CategoryChart,
   StatusChart,
@@ -358,18 +360,17 @@ export default function AdminDashboardPage() {
                         <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-muted text-2xs font-semibold text-muted-foreground">
                           {i + 1}
                         </span>
+                        <Avatar name={m.fullName} src={m.avatarPath} size="sm" />
                         <div className="min-w-0 flex-1">
                           <p className="truncate text-sm font-medium">{m.fullName}</p>
                           <p className="truncate text-2xs text-muted-foreground">
-                            {m.memberCode ?? '-'} · {m.activeCount} aktif
+                            {m.memberCode ?? '-'} · {formatNumber(m.level.totalBorrowed)} buku
                           </p>
                         </div>
                         {m.overdueCount > 0 ? (
                           <Badge tone="danger">{m.overdueCount} telat</Badge>
                         ) : (
-                          <span className="text-xs font-semibold tabular-nums text-muted-foreground">
-                            {m.borrowCount}
-                          </span>
+                          <LevelBadge level={m.level} showNumber={false} />
                         )}
                       </li>
                     ))}

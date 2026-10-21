@@ -22,9 +22,12 @@ import type {
   Fine,
   FineSummary,
   Holiday,
+  LeaderboardEntry,
+  LevelTier,
   Loan,
   Member,
   MemberOverview,
+  MyLevel,
   Notification,
   Opname,
   Reservation,
@@ -71,6 +74,9 @@ export const queryKeys = {
   announcements: (params: unknown) => ['announcements', params] as const,
   wishlist: (params: unknown) => ['wishlist', params] as const,
   wishlistDemand: ['wishlist', 'demand'] as const,
+  myLevel: ['levels', 'me'] as const,
+  levelTiers: ['levels', 'tiers'] as const,
+  leaderboard: (limit: number) => ['levels', 'leaderboard', limit] as const,
 };
 
 interface ListResult<T> {
@@ -447,6 +453,35 @@ export function useWishlistMarks(bookIds: number[]) {
     queryFn: async () =>
       (await api.get<number[]>('/wishlist/check', { query: { bookIds: key } })).data,
     enabled: bookIds.length > 0,
+  });
+}
+
+/* ------------------------------------------------------------------
+   Levels - derived from loan history on the server, never stored.
+   ------------------------------------------------------------------ */
+
+export function useMyLevel(options?: { enabled?: boolean }) {
+  return useQuery({
+    queryKey: queryKeys.myLevel,
+    queryFn: async () => (await api.get<MyLevel>('/levels/me')).data,
+    ...options,
+  });
+}
+
+/** The curve itself, so the UI never hard-codes a threshold. */
+export function useLevelTiers() {
+  return useQuery({
+    queryKey: queryKeys.levelTiers,
+    queryFn: async () => (await api.get<LevelTier[]>('/levels')).data,
+    staleTime: 30 * 60_000,
+  });
+}
+
+export function useLeaderboard(limit = 10) {
+  return useQuery({
+    queryKey: queryKeys.leaderboard(limit),
+    queryFn: async () => (await api.get<LeaderboardEntry[]>('/levels/leaderboard', { query: { limit } })).data,
+    staleTime: 60_000,
   });
 }
 

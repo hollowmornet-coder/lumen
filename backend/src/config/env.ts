@@ -48,6 +48,10 @@ export const env = {
 
   uploadDir: str('UPLOAD_DIR', 'uploads'),
   maxUploadBytes: int('MAX_UPLOAD_MB', 3) * 1024 * 1024,
+  // Profile photos get a larger ceiling than covers: an animated GIF that
+  // actually moves is easily 2-3 MB, and a rejected upload is a dead end for
+  // the student (there is nothing they can do to "fix" the file size).
+  avatarMaxUploadBytes: int('AVATAR_MAX_UPLOAD_MB', 5) * 1024 * 1024,
 
   authRateLimit: {
     windowMs: int('AUTH_RATE_LIMIT_WINDOW_MIN', 15) * 60 * 1000,

@@ -29,8 +29,9 @@ import {
 import { useAuth } from '@/features/auth/AuthContext';
 import { ForcePasswordChange } from '@/features/auth/ForcePasswordChange';
 import { useTheme } from '@/providers/ThemeProvider';
-import { cn, initials } from '@/lib/utils';
+import { cn } from '@/lib/utils';
 import { collapseVariants, EASE_OUT, sidebarVariants, springSoft } from '@/lib/motion';
+import { Avatar } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
 import { NotificationCenter } from '@/components/layout/NotificationCenter';
 
@@ -309,9 +310,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 aria-haspopup="menu"
                 className="flex items-center gap-2 rounded-lg px-1.5 py-1 transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >
-                <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-primary to-secondary text-xs font-semibold text-white">
-                  {initials(user?.fullName ?? '?')}
-                </span>
+                <Avatar
+                  name={user?.fullName ?? '?'}
+                  src={user?.avatarPath}
+                  size="sm"
+                />
                 <span className="hidden text-left leading-tight sm:block">
                   <span className="block text-sm font-medium text-foreground">
                     {user?.fullName}

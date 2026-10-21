@@ -192,6 +192,10 @@ Tidak perlu memilih "mode anggota" atau "mode buku" lebih dulu — server yang
 menentukan jenis kodenya. Bila pemindai tidak tersedia, ketik kode dan tekan
 **Enter**; hasilnya sama.
 
+Setelah kartu anggota terpindai, panel menampilkan **foto profil** dan **level**
+anggota tersebut. Foto berguna untuk memastikan kartu yang dipindai memang milik
+orang yang berdiri di depan meja.
+
 > Kode yang tidak dikenali menampilkan pesan dan kolom otomatis dikosongkan,
 > siap untuk pindaian berikutnya. Data yang sudah terisi tidak ikut terhapus.
 
@@ -266,6 +270,15 @@ Klik **Ekspor Excel** — file `.xlsx` terunduh dengan filter yang sedang aktif.
 
 ### Kode anggota
 Dibuat otomatis, misal `MBR-2026-004`. Siswa tidak dapat memilih sendiri.
+
+### Foto & level anggota
+Tabel anggota menampilkan **foto profil** (atau inisial bila belum ada) dan
+**badge level** hasil hitungan peminjaman. Kolom **Level** berguna untuk melihat
+sekilas siapa yang paling aktif membaca.
+
+Level dihitung dari jumlah buku yang benar-benar diserahkan (`borrowed_at`
+terisi), bukan dari jumlah pengajuan. Karena itu ia tidak bisa diubah manual —
+angka itu mengikuti riwayat transaksi.
 
 ### Mengubah status
 - **Nonaktifkan** ditolak bila anggota masih punya peminjaman aktif.
@@ -685,10 +698,58 @@ layar **Ganti kata sandi** yang tidak dapat ditutup.
 ## B6. Mengubah Profil
 
 Menu **Profil**:
+- **Foto profil** — unggah, ganti, atau hapus (lihat di bawah).
+- **Tingkatan anggota** — level dan kemajuan Anda.
 - **Ubah profil** — nama, kelas, nomor telepon.
 - **Ubah kata sandi** — butuh kata sandi lama.
 
 > Username, email, dan jenis akun tidak dapat diubah sendiri. Hubungi petugas.
+
+### Foto profil
+
+Di bagian paling atas halaman Profil ada kotak **Foto Profil**.
+
+1. Klik **Pilih Foto**, atau tarik berkas langsung ke kotak tersebut.
+2. Foto langsung diunggah dan disimpan di server perpustakaan.
+3. Untuk mengganti, ulangi langkah di atas — foto lama otomatis dihapus.
+4. Untuk kembali ke inisial nama, klik **Hapus**.
+
+| Aturan | Nilai |
+|---|---|
+| Format | JPG, PNG, WEBP, atau **GIF** |
+| Ukuran maksimal | 5 MB |
+| Nama berkas | Dibuat server (nama asli berkas Anda tidak dipakai) |
+
+**GIF beranimasi didukung.** Berkas disimpan apa adanya tanpa diolah ulang,
+jadi animasinya tetap berjalan di foto profil, header, dan daftar anggota.
+GIF hanya diterima untuk foto profil — sampul buku tetap JPG/PNG/WEBP.
+
+Foto Anda terlihat oleh petugas (misalnya saat memindai kartu di meja
+sirkulasi) dan oleh Anda sendiri. Anggota lain hanya melihat nama dan level
+Anda di papan peringkat, bukan foto.
+
+### Tingkatan anggota (level)
+
+Level menunjukkan seberapa sering Anda meminjam buku. Ia dihitung dari jumlah
+buku yang **benar-benar** Anda pinjam — bukan dari jumlah klik atau pengajuan.
+
+| Level | Nama | Syarat peminjaman |
+|---|---|---|
+| 1 | Pemula | 0 |
+| 2 | Pembaca | 5 |
+| 3 | Kutu Buku | 15 |
+| 4 | Pustakawan Muda | 30 |
+| 5 | Legenda Literasi | 60 |
+
+- Kartu level menampilkan nama tingkatan, bilah kemajuan, dan sisa peminjaman
+  menuju level berikutnya.
+- **Peringkat** di kartu itu adalah posisi Anda di papan peringkat pembaca.
+- Pengajuan yang ditolak atau dibatalkan **tidak** menambah hitungan; hanya
+  buku yang benar-benar diserahkan petugas yang dihitung.
+- Level tidak pernah "turun": riwayat peminjaman tidak dihapus.
+
+Papan peringkat pembaca juga tampil di **Beranda** Anda, berisi anggota paling
+aktif. Anggota yang belum pernah meminjam tidak ditampilkan di sana.
 
 ### Kartu anggota (QR)
 

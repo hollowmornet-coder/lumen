@@ -1,4 +1,5 @@
 import { query, queryOne, type RowDataPacket } from '../../config/db';
+import { resolveLevel } from '../levels/levels';
 
 const OVERDUE_EXPR =
   "(l.status IN ('borrowed','return_requested') AND l.due_at IS NOT NULL AND l.due_at < NOW())";
@@ -260,21 +261,25 @@ export interface MemberActivity {
   id: number;
   fullName: string;
   memberCode: string | null;
+  avatarPath: string | null;
   borrowCount: number;
   activeCount: number;
   overdueCount: number;
+  level: ReturnType<typeof resolveLevel>;
 }
 
 export async function getTopMembers(limit = 8): Promise<MemberActivity[]> {
   const rows = await query<RowDataPacket & Record<string, any>>(
     `SELECT u.id, u.full_name AS fullName, u.member_code AS memberCode,
+            u.avatar_path AS avatarPath,
             COUNT(l.id) AS borrowCount,
             SUM(l.status IN ('borrowed','return_requested')) AS activeCount,
-            SUM(${OVERDUE_EXPR}) AS overdueCount
+            SUM(${OVERDUE_EXPR}) AS overdueCount,
+            COALESCE(SUM(l.borrowed_at IS NOT NULL), 0) AS borrowedCount
        FROM users u
        LEFT JOIN loans l ON l.user_id = u.id
       WHERE u.role = 'user'
-      GROUP BY u.id, u.full_name, u.member_code
+      GROUP BY u.id, u.full_name, u.member_code, u.avatar_path
       ORDER BY borrowCount DESC, u.full_name ASC
       LIMIT ?`,
     [limit],
@@ -283,9 +288,11 @@ export async function getTopMembers(limit = 8): Promise<MemberActivity[]> {
     id: Number(r.id),
     fullName: r.fullName,
     memberCode: r.memberCode ?? null,
+    avatarPath: r.avatarPath ?? null,
     borrowCount: Number(r.borrowCount ?? 0),
     activeCount: Number(r.activeCount ?? 0),
     overdueCount: Number(r.overdueCount ?? 0),
+    level: resolveLevel(Number(r.borrowedCount ?? 0)),
   }));
 }
 

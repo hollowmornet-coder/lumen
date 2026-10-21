@@ -329,6 +329,20 @@ Audit trail untuk login, CRUD, dan setiap transisi transaksi.
 - **Pengumuman** — audiens `all`/`user`/`admin`, disaring di SQL, dengan kedaluwarsa
   yang diturunkan dari `NOW()`.
 
+### 4.13 Foto Profil & Level (migrasi 007)
+- **Foto profil** — unggah/ganti/hapus dari halaman Profil. Format PNG, JPG, WEBP,
+  dan **GIF** (animasi dipertahankan karena byte ditulis apa adanya). Batas 5 MB,
+  nama berkas dibuat server, dan format ditentukan dari **magic bytes** — SVG
+  ditolak karena bisa memuat skrip. Foto tampil di header, tabel anggota, dasbor,
+  dan panel sirkulasi saat kartu dipindai.
+- **Level anggota** — tingkatan 1-5 (Pemula → Legenda Literasi) yang **diturunkan**
+  dari `COUNT(loans WHERE borrowed_at IS NOT NULL)`, bukan kolom tersimpan.
+  Kurva tinggal di `modules/levels/levels.ts` dan diekspos lewat `GET /levels`,
+  sehingga frontend tidak menduplikasi ambang.
+- **Papan peringkat** — `GET /levels/leaderboard`; anggota tanpa peminjaman tidak
+  ditampilkan. Posisi diri sendiri dihitung dengan `ROW_NUMBER()` yang sama
+  sehingga tidak mungkin berbeda dari daftar.
+
 ---
 
 ## 5. Arsitektur

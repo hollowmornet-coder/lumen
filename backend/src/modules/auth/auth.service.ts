@@ -16,7 +16,7 @@ interface DuplicateRow extends RowDataPacket {
 export async function findAuthUserById(id: number): Promise<AuthUserRow | null> {
   return queryOne<AuthUserRow & RowDataPacket>(
     `SELECT id, username, email, password_hash, full_name, role, status,
-            class_name, phone, member_code, last_login_at, must_change_password
+            class_name, phone, member_code, avatar_path, last_login_at, must_change_password
        FROM users
       WHERE id = ?`,
     [id],
@@ -26,7 +26,7 @@ export async function findAuthUserById(id: number): Promise<AuthUserRow | null> 
 export async function findAuthUserByIdentifier(identifier: string): Promise<AuthUserRow | null> {
   return queryOne<AuthUserRow & RowDataPacket>(
     `SELECT id, username, email, password_hash, full_name, role, status,
-            class_name, phone, member_code, last_login_at, must_change_password
+            class_name, phone, member_code, avatar_path, last_login_at, must_change_password
        FROM users
       WHERE username = ? OR email = ?
       LIMIT 1`,
@@ -180,6 +180,31 @@ export async function changePassword(userId: number, input: ChangePasswordInput)
     'UPDATE users SET password_hash = ?, must_change_password = 0 WHERE id = ?',
     [passwordHash, userId],
   );
+}
+
+/**
+ * Stores the new avatar path and returns the path it replaced.
+ *
+ * The caller deletes the old file only after this write succeeds: a failed
+ * UPDATE must not leave the member with a broken photo.
+ */
+export async function setAvatarPath(userId: number, avatarPath: string): Promise<string | null> {
+  const previous = await queryOne<RowDataPacket & { avatar_path: string | null }>(
+    'SELECT avatar_path FROM users WHERE id = ?',
+    [userId],
+  );
+  await execute('UPDATE users SET avatar_path = ? WHERE id = ?', [avatarPath, userId]);
+  return previous?.avatar_path ?? null;
+}
+
+/** Clears the avatar path and returns the path that was removed. */
+export async function clearAvatarPath(userId: number): Promise<string | null> {
+  const previous = await queryOne<RowDataPacket & { avatar_path: string | null }>(
+    'SELECT avatar_path FROM users WHERE id = ?',
+    [userId],
+  );
+  await execute('UPDATE users SET avatar_path = NULL WHERE id = ?', [userId]);
+  return previous?.avatar_path ?? null;
 }
 
 /** Used by the admin member module to check for collisions before insert. */

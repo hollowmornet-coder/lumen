@@ -23,6 +23,8 @@ import { HeadlineFigure, StatCard } from '@/components/ui/stat-card';
 import { EmptyState, ErrorState } from '@/components/ui/states';
 import { useCategories, useMemberOverview, useMyLoans, useAnnouncements } from '@/hooks/useApi';
 import { useAuth } from '@/features/auth/AuthContext';
+import { LeaderboardCard } from '@/features/profile/LeaderboardCard';
+import { MyLevelCard } from '@/features/profile/MyLevelCard';
 import { cn, formatDate, formatNumber, relativeDays } from '@/lib/utils';
 import { staggerContainer, staggerItem } from '@/lib/motion';
 
@@ -228,6 +230,12 @@ export default function MemberHomePage() {
 
         {/* ---------- Announcements ---------- */}
         <MemberAnnouncements />
+
+        {/* ---------- Level + leaderboard ---------- */}
+        <section className="grid gap-4 lg:grid-cols-2" aria-label="Level dan peringkat">
+          <MyLevelCard />
+          <LeaderboardCard limit={8} />
+        </section>
 
         {/* ---------- Recent loans + quick actions ---------- */}
         <section className="grid gap-4 lg:grid-cols-3" aria-label="Pinjaman dan aksi cepat">

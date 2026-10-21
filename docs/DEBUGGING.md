@@ -710,7 +710,7 @@ cost keamanannya.
 | Build backend | `npm run build` | Lulus → `dist/server.js` |
 | Tipe frontend | `npx tsc -p tsconfig.app.json --noEmit` | Lulus, 0 error |
 | Build frontend | `npm run build` | Lulus → `dist/` |
-| Uji API otomatis | `scripts\api-test.ps1` | **224/224 lulus** |
+| Uji API otomatis | `scripts\api-test.ps1` | **251/251 lulus** |
 | Uji regresi sirkulasi | Manual via API (R1-R28) | **28/28 lulus** |
 
 Lihat [`TESTING.md`](TESTING.md) untuk rincian skenario dan hasil.

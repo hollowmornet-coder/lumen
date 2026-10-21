@@ -52,12 +52,12 @@ Opsi:
 | 2 | Build backend | `npm run build` | ✅ Lulus — `dist/server.js` terbentuk |
 | 3 | Tipe frontend | `npx tsc -p tsconfig.app.json --noEmit` | ✅ Lulus — 0 error |
 | 4 | Build frontend | `npm run build` | ✅ Lulus — bundle ke `dist/` |
-| 5 | Uji API fungsional | `scripts\api-test.ps1` | ✅ **224 / 224 lulus** |
+| 5 | Uji API fungsional | `scripts\api-test.ps1` | ✅ **251 / 251 lulus** |
 | 6 | Uji regresi sirkulasi lanjutan | Manual via API (R1–R28) | ✅ **28 / 28 lulus** |
 
 ---
 
-## 3. Rincian Uji Fungsional (224 pemeriksaan)
+## 3. Rincian Uji Fungsional (251 pemeriksaan)
 
 ### [0] Inisialisasi
 | # | Skenario | Hasil |
@@ -298,7 +298,39 @@ yang boleh mengubah.
 | 22.12 | Restore menolak berkas non-LUMEN | ✅ 400 |
 | 22.13 | Siswa tidak boleh memulihkan database | ✅ 403 |
 
-**Total: 224 dari 224 pemeriksaan lulus.**
+### [23] Foto Profil & Level Anggota (27 pemeriksaan)
+
+| # | Skenario | Hasil |
+|---|---|---|
+| 23.1 | Berkas bukan gambar (teks berekstensi `.png`) ditolak | ✅ 400 |
+| 23.2 | Berkas melebihi batas 5 MB ditolak | ✅ 400 |
+| 23.3 | Siswa mengunggah foto profil (PNG) | ✅ 200 |
+| 23.4 | `avatarPath` menunjuk ke `/uploads/avatars/` | ✅ Lulus |
+| 23.5 | Berkas foto dilayani server sebagai static | ✅ 200 |
+| 23.6 | `Content-Type` sesuai format (`image/png`) | ✅ Lulus |
+| 23.7 | `GET /auth/me` memuat `avatarPath` terbaru | ✅ Lulus |
+| 23.8 | **Foto GIF diterima** | ✅ 200 |
+| 23.9 | Ekstensi `.gif` dipertahankan (animasi utuh) | ✅ Lulus |
+| 23.10 | Foto lama dihapus setelah diganti | ✅ 404 |
+| 23.11 | Petugas juga dapat memasang foto profil | ✅ 200 |
+| 23.12 | Unggah tanpa sesi ditolak | ✅ 401 |
+| 23.13 | `GET /levels` dapat dibaca siswa | ✅ 200 |
+| 23.14 | Tangga level berisi seluruh tingkatan | ✅ 5 tingkat |
+| 23.15 | Level terendah dimulai dari 0 peminjaman | ✅ `minLoans = 0` |
+| 23.16 | `GET /levels/me` mengembalikan level sendiri | ✅ 200 |
+| 23.17 | Anggota yang pernah meminjam punya `totalBorrowed ≥ 1` | ✅ Lulus |
+| 23.18 | `currentMin ≤ totalBorrowed` (level konsisten) | ✅ Lulus |
+| 23.19 | `progress` berada di rentang 0-100 | ✅ Lulus |
+| 23.20 | `GET /levels/leaderboard` dapat dibaca siswa | ✅ 200 |
+| 23.21 | Papan peringkat tidak memuat anggota tanpa peminjaman | ✅ Lulus |
+| 23.22 | Peringkat 1 = peminjaman terbanyak | ✅ Lulus |
+| 23.23 | Anggota baru (0 pinjaman) mulai di level 1 | ✅ level 1 |
+| 23.24 | Anggota baru belum punya peringkat | ✅ `rank = null` |
+| 23.25 | `GET /members` menyertakan objek `level` | ✅ Lulus |
+| 23.26 | Siswa dapat menghapus foto profil | ✅ `avatarPath = null` |
+| 23.27 | Menghapus foto saat belum ada tetap 200 (idempoten) | ✅ 200 |
+
+**Total: 251 dari 251 pemeriksaan lulus.**
 
 ### Uji regresi fitur sirkulasi lanjutan (migrasi 005)
 
@@ -524,7 +556,7 @@ Jika dibutuhkan bukti visual, gunakan:
 ## 9. Hasil Akhir
 
 ```
-Lulus  : 224
+Lulus  : 251
 Gagal  : 0
 SEMUA PENGUJIAN LULUS
 ```

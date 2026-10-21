@@ -2,26 +2,34 @@ import { execute, query, queryOne, withTransaction, type RowDataPacket } from '.
 import { notFound } from '../../lib/errors';
 import { escapeLike, paginate, parseListQuery, type Paginated } from '../../lib/pagination';
 import { toPublicUser, type AuthUserRow, type PublicUser } from '../auth/auth.types';
+import { resolveLevel, type MemberLevel } from '../levels/levels';
 import type { CreateMemberInput, MemberQuery, UpdateMemberInput } from './members.schema';
 
 interface MemberRow extends RowDataPacket, AuthUserRow {
   created_at: string;
   active_loans?: number;
   total_loans?: number;
+  borrowed_count?: number;
 }
 
 export interface Member extends PublicUser {
   createdAt: string;
   activeLoans: number;
   totalLoans: number;
+  /** Loans where a copy actually changed hands - the basis for `level`. */
+  borrowedCount: number;
+  level: MemberLevel;
 }
 
 function toMember(row: MemberRow): Member {
+  const borrowedCount = Number(row.borrowed_count ?? 0);
   return {
     ...toPublicUser(row),
     createdAt: row.created_at,
     activeLoans: Number(row.active_loans ?? 0),
     totalLoans: Number(row.total_loans ?? 0),
+    borrowedCount,
+    level: resolveLevel(borrowedCount),
   };
 }
 
@@ -48,11 +56,19 @@ function buildFilters(q: MemberQuery) {
 
 const MEMBER_SELECT = `
   SELECT u.id, u.username, u.email, u.password_hash, u.full_name, u.role, u.status,
-         u.class_name, u.phone, u.member_code, u.last_login_at, u.created_at,
+         u.class_name, u.phone, u.member_code, u.avatar_path, u.last_login_at,
+         u.must_change_password, u.created_at,
          COALESCE(SUM(l.status IN ('borrowed','return_requested')), 0) AS active_loans,
-         COUNT(l.id) AS total_loans
+         COUNT(l.id) AS total_loans,
+         COALESCE(SUM(l.borrowed_at IS NOT NULL), 0) AS borrowed_count
     FROM users u
     LEFT JOIN loans l ON l.user_id = u.id
+`;
+
+const MEMBER_GROUP_BY = `
+  GROUP BY u.id, u.username, u.email, u.password_hash, u.full_name, u.role,
+           u.status, u.class_name, u.phone, u.member_code, u.avatar_path,
+           u.last_login_at, u.must_change_password, u.created_at
 `;
 
 export async function listMembers(params: MemberQuery): Promise<Paginated<Member>> {
@@ -76,8 +92,7 @@ export async function listMembers(params: MemberQuery): Promise<Paginated<Member
 
   const rows = await query<MemberRow>(
     `${MEMBER_SELECT} ${whereSql}
-     GROUP BY u.id, u.username, u.email, u.password_hash, u.full_name, u.role,
-              u.status, u.class_name, u.phone, u.member_code, u.last_login_at, u.created_at
+     ${MEMBER_GROUP_BY}
      ORDER BY u.${listQuery.sort} ${listQuery.direction}, u.id DESC
      LIMIT ? OFFSET ?`,
     [...args, listQuery.pageSize, listQuery.offset],
@@ -95,8 +110,7 @@ export async function getMemberById(id: number): Promise<Member> {
 export async function getMemberOrNull(id: number): Promise<Member | null> {
   const row = await queryOne<MemberRow>(
     `${MEMBER_SELECT} WHERE u.id = ?
-     GROUP BY u.id, u.username, u.email, u.password_hash, u.full_name, u.role,
-              u.status, u.class_name, u.phone, u.member_code, u.last_login_at, u.created_at`,
+     ${MEMBER_GROUP_BY}`,
     [id],
   );
   return row ? toMember(row) : null;

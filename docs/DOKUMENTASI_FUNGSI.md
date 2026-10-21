@@ -74,6 +74,8 @@ Header `Authorization: Bearer <token>` juga diterima (berguna untuk pengujian).
 | POST | `/auth/logout` | Publik | Keluar (hapus cookie) |
 | GET | `/auth/me` | Login | Profil sesi saat ini |
 | PATCH | `/auth/profile` | Login | Ubah profil sendiri |
+| POST | `/auth/avatar` | Login | Unggah foto profil (multipart) |
+| DELETE | `/auth/avatar` | Login | Hapus foto profil |
 | POST | `/auth/change-password` | Login | Ubah kata sandi sendiri |
 | POST | `/auth/forgot-password` | Publik | Minta token reset (rate limited) |
 | POST | `/auth/reset-password` | Publik | Tukar token dengan sandi baru |
@@ -167,6 +169,56 @@ pengiriman email dan respons tidak lagi memuat token.
 Token diperiksa di SQL (`used_at IS NULL AND expires_at > NOW()`), lalu ditandai
 terpakai dan kata sandi di-hash ulang dengan bcrypt. Token yang sama tidak dapat
 dipakai dua kali (`TOKEN_USED`).
+
+### 2.5 `POST /auth/avatar` — Unggah foto profil
+
+`multipart/form-data`, field berkas bernama **`avatar`**. Berlaku untuk kedua role
+(siswa maupun petugas).
+
+**Format & batas**
+
+| Aspek | Nilai |
+|---|---|
+| Format | PNG, JPG, WEBP, **GIF** (animasi didukung) |
+| Ukuran maksimal | 5 MB (`AVATAR_MAX_UPLOAD_BYTES`, env `AVATAR_MAX_UPLOAD_MB`) |
+| Lokasi simpan | `uploads/avatars/<32 hex>.<ext>` |
+| Nama berkas | Dibuat server; nama asli dari klien tidak pernah dipakai |
+
+**Prosedur** (`auth.controller.ts › uploadAvatar`)
+1. `avatarUpload` menolak MIME yang bukan `image/*` dan berkas > 5 MB.
+2. `storeAvatar()` memeriksa **magic bytes** — ekstensi dan MIME dari klien tidak
+   dipercaya. SVG sengaja tidak diterima karena bisa memuat skrip (XSS).
+3. Berkas ditulis ke disk dengan nama acak, **byte asli tanpa re-encode** sehingga
+   GIF tetap beranimasi.
+4. `users.avatar_path` diperbarui, lalu berkas lama dihapus (best-effort).
+5. Respons berisi `PublicUser` terbaru (termasuk `avatarPath`) agar klien dapat
+   langsung memakai `setUser`.
+
+Bila `UPDATE` gagal, berkas baru yang sudah tertulis ikut dihapus sehingga tidak
+ada berkas yatim.
+
+**Respons 200**
+```json
+{
+  "success": true,
+  "data": { "id": 2, "fullName": "Andira Prameswari", "avatarPath": "/uploads/avatars/3f9a….gif", "...": "…" },
+  "message": "Foto profil berhasil diperbarui."
+}
+```
+
+**Kegagalan**
+
+| Kondisi | Status | Kode |
+|---|---|---|
+| Bukan gambar / magic bytes tidak cocok | 400 | `BAD_REQUEST` |
+| Berkas > 5 MB | 400 | `UPLOAD_ERROR` |
+| Tanpa sesi | 401 | `UNAUTHORIZED` |
+| Terlalu sering mengunggah | 429 | `TOO_MANY_REQUESTS` |
+
+### 2.6 `DELETE /auth/avatar` — Hapus foto profil
+
+Mengosongkan `avatar_path` dan menghapus berkasnya. **Idempoten**: memanggilnya
+saat anggota belum punya foto tetap menghasilkan `200`.
 
 ---
 
@@ -928,7 +980,88 @@ pemberitahuan penting akan muncul.
 
 ---
 
+## 12h. Modul Level — `/api/levels`
+
+| Method | Endpoint | Akses | Fungsi |
+|---|---|---|---|
+| GET | `/levels` | Login | Tangga level (ambang + nama) |
+| GET | `/levels/me` | Login | Level + kemajuan diri sendiri |
+| GET | `/levels/leaderboard` | Login | Papan peringkat pembaca |
+
+### Konsep
+
+Level adalah **nilai turunan**, bukan kolom. Basisnya satu angka yang dihitung
+SQL:
+
+```sql
+SELECT COUNT(*) FROM loans
+ WHERE user_id = ? AND borrowed_at IS NOT NULL
+```
+
+`borrowed_at IS NOT NULL` dipilih, bukan `status = 'returned'`:
+
+- Pengajuan `pending`, `approved`, `rejected`, dan `cancelled` tidak pernah
+  mengisi `borrowed_at`, jadi tidak menaikkan level.
+- `borrowed_at` tetap terisi walau status berubah menjadi `returned`,
+  `return_requested`, atau kondisi `damaged`/`lost`.
+
+Kurva ada di `backend/src/modules/levels/levels.ts` dan diekspos lewat
+`GET /levels`, sehingga frontend tidak pernah menduplikasi ambang:
+
+| Level | Nama | Peminjaman |
+|---|---|---|
+| 1 | Pemula | 0 |
+| 2 | Pembaca | 5 |
+| 3 | Kutu Buku | 15 |
+| 4 | Pustakawan Muda | 30 |
+| 5 | Legenda Literasi | 60 |
+
+### `GET /levels/me`
+
+```json
+{
+  "level": 3,
+  "name": "Kutu Buku",
+  "tone": "cyan",
+  "blurb": "Peminjam aktif. Petugas sudah hafal judul yang kamu cari.",
+  "totalBorrowed": 17,
+  "currentMin": 15,
+  "nextMin": 30,
+  "nextName": "Pustakawan Muda",
+  "remaining": 13,
+  "progress": 13,
+  "rank": 2
+}
+```
+
+`progress` dihitung di dalam level saat ini (`(total - currentMin) / (nextMin -
+currentMin) × 100`) dan bernilai `100` pada level tertinggi. `rank` bernilai
+`null` bila anggota belum pernah meminjam.
+
+### `GET /levels/leaderboard?limit=10`
+
+Anggota tanpa peminjaman **tidak** ditampilkan: papan berisi orang yang tidak
+pernah meminjam tidak memberi informasi apa pun, dan akan menempatkan setiap
+akun baru di peringkat 1. `limit` dibatasi 1-50.
+
+Urutan dihitung di SQL (`totalBorrowed DESC, full_name ASC, id ASC`) sehingga
+seri tetap stabil. Posisi seorang anggota (`getMemberRank`) memakai
+`ROW_NUMBER() OVER (...)` dengan urutan yang sama, jadi angkanya tidak mungkin
+berbeda dari daftar yang dilihat pengguna.
+
+### Dampak ke modul lain
+
+| Tempat | Perubahan |
+|---|---|
+| `GET /members` | Setiap baris membawa `borrowedCount` dan objek `level` |
+| `GET /dashboard/admin/charts` | `topMembers[].level` + `avatarPath` |
+| `POST /scan` | Target `member` membawa `avatarPath` dan `level` |
+| `GET /excel/members` | Kolom tambahan **Level** |
+
+---
+
 ## 13. Modul Aktivitas — `/api/activity` (Admin)
+
 `GET /activity` dengan `search`, `action`, `page`, `pageSize`.
 
 Menampilkan jejak audit: aktor, aksi, deskripsi, waktu, IP, dan metadata JSON.
@@ -936,7 +1069,8 @@ Log ditulis dengan `try/catch` sehingga kegagalan pencatatan tidak pernah
 membatalkan operasi bisnis yang sudah berhasil.
 
 Aksi baru yang tercatat: `loan.counter`, `loan.renew`, `loan.release`,
-`fine.settle`, `reservation.create`, `reservation.cancel`, `password.reset_request`.
+`fine.settle`, `reservation.create`, `reservation.cancel`, `password.reset_request`,
+`profile.avatar`.
 
 ---
 
@@ -1015,6 +1149,9 @@ Mengubah pengaturan **tidak** menulis ulang data historis: denda dan
 | `bulkCreateMembers` / `findExistingIdentities` | `modules/members/members.service.ts` | Impor anggota satu transaksi |
 | `generateBatchPassword` / `parseMembersWorkbook` | `modules/excel/excel.service.ts` | Impor anggota Excel |
 | `resolveScan` | `modules/scan/scan.service.ts` | Mengenali kartu/ISBN/nota hasil pindai |
+| `resolveLevel` / `LEVEL_TIERS` | `modules/levels/levels.ts` | Kurva level (fungsi murni, tanpa DB) |
+| `countBorrowedLoans` / `getMemberLevel` | `modules/levels/levels.service.ts` | Level satu anggota dari riwayat |
+| `getLeaderboard` / `getMemberRank` | `modules/levels/levels.service.ts` | Papan peringkat + posisi sendiri |
 | `getAdminOverview` / `getTransactionTrend` | `modules/dashboard/dashboard.service.ts` | Statistik & grafik |
 | `getNeverBorrowedBooks` / `getLateMembers` / `getFineReport` | `modules/dashboard/dashboard.service.ts` | Laporan analitis |
 | `buildBooksWorkbook` / `parseBooksWorkbook` | `modules/excel/excel.service.ts` | Excel |
@@ -1022,7 +1159,10 @@ Mengubah pengaturan **tidak** menulis ulang data historis: denda dan
 | `logActivity` | `modules/activity/activity.service.ts` | Audit trail |
 | `requireAuth` / `requireRole` | `middleware/auth.ts` | Otorisasi |
 | `validateBody` / `validateQuery` | `middleware/validate.ts` | Validasi Zod |
-| `storeCover` | `lib/upload.ts` | Unggah aman (magic byte) |
+| `storeCover` | `lib/upload.ts` | Unggah sampul aman (magic byte) |
+| `storeAvatar` / `avatarUpload` | `lib/upload.ts` | Unggah foto profil (PNG/JPG/WEBP/GIF) |
+| `detectImageType` | `lib/upload.ts` | Deteksi format dari byte; GIF opt-in |
+| `setAvatarPath` / `clearAvatarPath` | `modules/auth/auth.service.ts` | Ganti/hapus foto profil |
 
 ---
 
@@ -1041,6 +1181,12 @@ Mengubah pengaturan **tidak** menulis ulang data historis: denda dan
 | `useHolidays`, `useVisits`, `useOpnames` | `hooks/useApi.ts` | Kalender, kunjungan, opname |
 | `useReviews`, `useReviewStats`, `useMyReview` | `hooks/useApi.ts` | Ulasan & rating |
 | `useAnnouncements`, `useWishlist`, `useWishlistMarks` | `hooks/useApi.ts` | Pengumuman & daftar keinginan |
+| `useMyLevel`, `useLevelTiers`, `useLeaderboard` | `hooks/useApi.ts` | Level, tangga level, papan peringkat |
+| `Avatar` | `components/ui/avatar.tsx` | Foto profil + fallback inisial |
+| `LevelBadge` / `LevelProgress` | `components/ui/level-badge.tsx` | Badge & bilah kemajuan level |
+| `AvatarUploader` | `features/profile/AvatarUploader.tsx` | Unggah/hapus foto (drag & drop) |
+| `MyLevelCard` | `features/profile/MyLevelCard.tsx` | Kartu level + tangga level |
+| `LeaderboardCard` | `features/profile/LeaderboardCard.tsx` | Papan peringkat di beranda siswa |
 | `StarRating` | `components/ui/star-rating.tsx` | Bintang setengah untuk rata-rata |
 | `BookReviews` | `components/books/BookReviews.tsx` | Ulasan di halaman detail buku |
 | `MemberImportDialog` | `pages/admin/MemberImportDialog.tsx` | Impor anggota dua langkah |

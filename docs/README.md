@@ -56,6 +56,10 @@ admin perpustakaan dalam peminjaman dan pendataan buku.
 - **Stok opname**: bandingkan stok sistem dengan hitung fisik, lalu terapkan selisihnya.
 - **Pengumuman**: terbitkan informasi untuk semua, hanya siswa, atau hanya petugas.
 - **Laporan permintaan**: judul yang paling banyak masuk daftar keinginan anggota.
+- **Foto profil anggota** tampil di tabel anggota, dasbor, dan panel sirkulasi
+  (membantu memastikan kartu yang dipindai memang milik orangnya).
+- **Level anggota** tampil per baris di tabel anggota dan di "Anggota Teraktif",
+  dihitung dari riwayat peminjaman.
 - Pengaturan 15 aturan operasional (kuota, masa pinjam, persetujuan, denda harian,
   perpanjangan, batas ambil, blokir denda, biaya rusak/hilang, masa sisih antrean,
   penggeseran jatuh tempo saat libur, batas antrean, syarat ulasan, pencatatan kunjungan).
@@ -76,6 +80,9 @@ admin perpustakaan dalam peminjaman dan pendataan buku.
 - **Ulasan & rating bintang** pada buku yang pernah dipinjam.
 - **Daftar keinginan** sebagai penanda baca pribadi (tidak memesan stok).
 - **Pengumuman** dari petugas tampil di beranda.
+- **Foto profil** (JPG/PNG/WEBP/**GIF animasi**, maks. 5 MB) — unggah, ganti, atau hapus.
+- **Tingkatan anggota (level)** dari jumlah buku yang benar-benar dipinjam, lengkap
+  dengan bilah kemajuan, tangga level, dan **papan peringkat pembaca** di beranda.
 - Riwayat peminjaman dan profil.
 
 ---
@@ -278,11 +285,11 @@ MYSQLCLIENT_PATH=C:\xampp\mysql\bin\mysql.exe
 
 ```
 UKK/
-├─ database.sql              # deliverable database (.sql), sudah memuat migrasi 001-006
+├─ database.sql              # deliverable database (.sql), sudah memuat migrasi 001-007
 ├─ migrations/               # riwayat perubahan skema (005 = sirkulasi, 006 = operasional)
 ├─ start-lumen.bat           # penanda backend + frontend
 ├─ scripts/
-│  ├─ api-test.ps1           # 224 pemeriksaan uji otomatis
+│  ├─ api-test.ps1           # 251 pemeriksaan uji otomatis
 │  └─ last-test-run.txt      # hasil uji terakhir
 ├─ backend/
 │  └─ src/

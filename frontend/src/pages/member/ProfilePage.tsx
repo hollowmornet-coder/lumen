@@ -21,16 +21,20 @@ import {
   User,
 } from 'lucide-react';
 import { PageBody, PageHeader } from '@/components/layout/PageHeader';
+import { Avatar } from '@/components/ui/avatar';
 import { Badge, RoleBadge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Field, Input } from '@/components/ui/input';
+import { LevelBadge } from '@/components/ui/level-badge';
 import { QrCode } from '@/components/ui/qr-code';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ErrorState } from '@/components/ui/states';
 import { useAuth } from '@/features/auth/AuthContext';
+import { AvatarUploader } from '@/features/profile/AvatarUploader';
+import { MyLevelCard } from '@/features/profile/MyLevelCard';
 import { api } from '@/lib/api';
-import { useApiMutation } from '@/hooks/useApi';
-import { cn, formatDateTime, initials } from '@/lib/utils';
+import { useApiMutation, useMyLevel } from '@/hooks/useApi';
+import { cn, formatDateTime } from '@/lib/utils';
 import { EASE_OUT } from '@/lib/motion';
 import type { User as UserRecord } from '@/types';
 
@@ -127,7 +131,11 @@ export default function ProfilePage() {
             transition={{ duration: 0.32, ease: EASE_OUT }}
             className="grid gap-5 lg:grid-cols-[minmax(0,20rem)_minmax(0,1fr)] lg:items-start"
           >
-            <IdentityCard user={user} />
+            <div className="space-y-5">
+              <AvatarUploader />
+              <IdentityCard user={user} />
+              {user.role === 'user' ? <MyLevelCard /> : null}
+            </div>
             <div className="space-y-5">
               <ProfileForm user={user} />
               <PasswordForm />
@@ -142,15 +150,12 @@ export default function ProfilePage() {
 /* ------------------------------------------------------------------ */
 
 function IdentityCard({ user }: { user: UserRecord }) {
+  const level = useMyLevel({ enabled: user.role === 'user' });
+
   return (
     <section className="panel p-5" aria-label="Data keanggotaan">
       <div className="flex items-start gap-3">
-        <span
-          className="flex size-12 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-primary to-secondary font-display text-sm font-semibold text-white"
-          aria-hidden
-        >
-          {initials(fact(user.fullName, '?'))}
-        </span>
+        <Avatar name={fact(user.fullName, '?')} src={user.avatarPath} size="lg" />
         <div className="min-w-0">
           <h2 className="font-display text-base font-semibold text-foreground">
             {fact(user.fullName)}
@@ -160,6 +165,7 @@ function IdentityCard({ user }: { user: UserRecord }) {
           </p>
           <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
             <RoleBadge role={user.role} />
+            {level.data ? <LevelBadge level={level.data} /> : null}
             {user.status === 'active' ? (
               <Badge tone="success">Aktif</Badge>
             ) : user.status === 'inactive' ? (
