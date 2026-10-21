@@ -536,42 +536,79 @@ export function useApiMutation<TVars, TData = unknown>({
    URL-synced list state - keeps filters shareable via the address bar.
    ------------------------------------------------------------------ */
 
-export function useListParams(defaults: Record<string, string> = {}) {
+/**
+ * Module-level constant, not an inline `{}` default. A fresh object literal in
+ * the parameter list gets a new identity on every render, which would make
+ * `get`/`set` change identity on every render too - and a caller that syncs a
+ * value from an effect (CatalogPage does, for the search box) then re-runs that
+ * effect forever. React Router navigates even when the URL is unchanged, so
+ * each pass scheduled another navigation: "Maximum update depth exceeded",
+ * and the whole shell - sidebar included - stopped responding to clicks.
+ */
+const EMPTY_LIST_DEFAULTS: Record<string, string> = {};
+
+export function useListParams(defaults: Record<string, string> = EMPTY_LIST_DEFAULTS) {
   const [params, setParams] = useSearchParams();
 
+  // Callers may pass a fresh object literal every render (CatalogPage passes
+  // none at all). Re-key it on its contents so the callbacks below keep a
+  // stable identity while the values are unchanged.
+  const defaultsKey = JSON.stringify(defaults);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on contents
+  const stableDefaults = React.useMemo(() => defaults, [defaultsKey]);
+
   const get = React.useCallback(
-    (key: string, fallback = '') => params.get(key) ?? defaults[key] ?? fallback,
-    [params, defaults],
+    (key: string, fallback = '') => params.get(key) ?? stableDefaults[key] ?? fallback,
+    [params, stableDefaults],
+  );
+
+  /** The value a key should hold, or `null` when it should be absent. */
+  const resolve = React.useCallback(
+    (key: string, value: string | number | undefined) =>
+      value === undefined || value === '' || value === stableDefaults[key] ? null : String(value),
+    [stableDefaults],
   );
 
   const set = React.useCallback(
     (key: string, value: string | number | undefined) => {
+      // Bail out when the key already holds this value. Without this guard a
+      // caller that sets a value it just read from the URL still triggers a
+      // navigation on every pass.
+      if ((params.get(key) ?? null) === resolve(key, value)) return;
+
       setParams(
         (prev: URLSearchParams) => {
           const next = new URLSearchParams(prev);
-          if (value === undefined || value === '' || value === defaults[key]) {
+          const wanted = resolve(key, value);
+          if (wanted === null) {
             next.delete(key);
           } else {
-            next.set(key, String(value));
+            next.set(key, wanted);
           }
           return next;
         },
         { replace: true },
       );
     },
-    [setParams, defaults],
+    [params, setParams, resolve],
   );
 
   const setMany = React.useCallback(
     (values: Record<string, string | number | undefined>) => {
+      const changed = Object.entries(values).some(
+        ([key, value]) => (params.get(key) ?? null) !== resolve(key, value),
+      );
+      if (!changed) return;
+
       setParams(
         (prev: URLSearchParams) => {
           const next = new URLSearchParams(prev);
           for (const [key, value] of Object.entries(values)) {
-            if (value === undefined || value === '' || value === defaults[key]) {
+            const wanted = resolve(key, value);
+            if (wanted === null) {
               next.delete(key);
             } else {
-              next.set(key, String(value));
+              next.set(key, wanted);
             }
           }
           return next;
@@ -579,10 +616,13 @@ export function useListParams(defaults: Record<string, string> = {}) {
         { replace: true },
       );
     },
-    [setParams, defaults],
+    [params, setParams, resolve],
   );
 
-  const reset = React.useCallback(() => setParams(new URLSearchParams(), { replace: true }), [setParams]);
+  const reset = React.useCallback(() => {
+    if (params.toString() === '') return;
+    setParams(new URLSearchParams(), { replace: true });
+  }, [params, setParams]);
 
   return { params, get, set, setMany, reset, raw: params };
 }
